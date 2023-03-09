@@ -74,6 +74,7 @@ def install_app(app_installation: AppInstallation, activate: bool = False):
         audience=manifest_data.get("audience"),
         is_installed=False,
         author=manifest_data.get("author"),
+        brand=manifest_data.get("brand"),
     )
 
     app.permissions.set(app_installation.permissions.all())

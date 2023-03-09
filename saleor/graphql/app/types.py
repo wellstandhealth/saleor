@@ -221,6 +221,29 @@ class AppManifestRequiredSaleorVersion(BaseObjectType):
         doc_category = DOC_CATEGORY_APPS
 
 
+class AppBrandLogo(BaseObjectType):
+    default = graphene.String(required=True, description="URL to the base logo image.")
+
+    class Meta:
+        doc_category = DOC_CATEGORY_APPS
+
+
+class AppBrandColors(BaseObjectType):
+    icon = graphene.String(required=True, description="Color in hex triplet format.")
+
+    class Meta:
+        doc_category = DOC_CATEGORY_APPS
+
+
+class AppBrand(BaseObjectType):
+    logo = graphene.Field(AppBrandLogo, required=True)
+    colors = graphene.Field(AppBrandColors, required=True)
+
+    class Meta:
+        description = "Represents the app's brand data."
+        doc_category = DOC_CATEGORY_APPS
+
+
 class Manifest(BaseObjectType):
     identifier = graphene.String(required=True)
     version = graphene.String(required=True)
@@ -263,6 +286,9 @@ class Manifest(BaseObjectType):
     )
     author = graphene.String(
         description=("The App's author name." + ADDED_IN_313 + PREVIEW_FEATURE)
+    )
+    brand = graphene.Field(
+        AppBrand, description="App's brand data." + ADDED_IN_313 + PREVIEW_FEATURE
     )
 
     class Meta:
@@ -360,6 +386,9 @@ class App(ModelObjectType[models.App]):
         AppExtension,
         description="App's dashboard extensions." + ADDED_IN_31 + PREVIEW_FEATURE,
         required=True,
+    )
+    brand = graphene.Field(
+        AppBrand, description="App's brand data." + ADDED_IN_313 + PREVIEW_FEATURE
     )
 
     class Meta:

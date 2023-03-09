@@ -60,6 +60,7 @@ class App(ModelWithMetadata):
     audience = models.CharField(blank=True, null=True, max_length=256)
     is_installed = models.BooleanField(default=True)
     author = models.CharField(blank=True, null=True, max_length=60)
+    brand_logo_default = models.ImageField(upload_to="app-logos", blank=True, null=True)
     objects = AppManager()
 
     class Meta(ModelWithMetadata.Meta):
@@ -160,6 +161,7 @@ class AppExtension(models.Model):
 class AppInstallation(Job):
     app_name = models.CharField(max_length=60)
     manifest_url = models.URLField()
+    brand_logo_default = models.ImageField(upload_to="app-logos", blank=True, null=True)
     permissions = models.ManyToManyField(
         Permission,
         blank=True,
