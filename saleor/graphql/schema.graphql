@@ -2817,17 +2817,31 @@ enum AppExtensionTargetEnum {
 """Represents the app's brand data."""
 type AppBrand @doc(category: "Apps") {
   logo: AppBrandLogo!
-  colors: AppBrandColors!
 }
 
 type AppBrandLogo @doc(category: "Apps") {
-  """URL to the base logo image."""
-  default: String!
+  """URL to the default logo image."""
+  default(
+    """
+    Desired longest side the image in pixels. Defaults to 4096. Images are never cropped. Pass 0 to retrieve the original size (not recommended).
+    """
+    size: Int
+
+    """
+    The format of the image. When not provided, format of the original image will be used.
+    
+    Added in Saleor 3.13.
+    
+    Note: this API is currently in Feature Preview and can be subject to changes at later point.
+    """
+    format: IconThumbnailFormatEnum = ORIGINAL
+  ): String!
 }
 
-type AppBrandColors @doc(category: "Apps") {
-  """Color in hex triplet format."""
-  icon: String!
+"""An enumeration."""
+enum IconThumbnailFormatEnum {
+  ORIGINAL
+  WEBP
 }
 
 type EventDeliveryCountableConnection {
@@ -12001,6 +12015,15 @@ type AppInstallation implements Node & Job @doc(category: "Apps") {
   message: String
   appName: String!
   manifestUrl: String!
+
+  """
+  App's brand data.
+  
+  Added in Saleor 3.13.
+  
+  Note: this API is currently in Feature Preview and can be subject to changes at later point.
+  """
+  brand: AppBrand
 }
 
 type AppCountableConnection @doc(category: "Apps") {
@@ -23564,7 +23587,7 @@ type Manifest @doc(category: "Apps") {
   
   Note: this API is currently in Feature Preview and can be subject to changes at later point.
   """
-  brand: AppBrand
+  brand: AppManifestBrand
 }
 
 type AppManifestExtension @doc(category: "Apps") {
@@ -23619,6 +23642,29 @@ type AppManifestRequiredSaleorVersion @doc(category: "Apps") {
   Note: this API is currently in Feature Preview and can be subject to changes at later point.
   """
   satisfied: Boolean!
+}
+
+type AppManifestBrand {
+  logo: AppManifestBrandLogo!
+}
+
+type AppManifestBrandLogo @doc(category: "Apps") {
+  """Data URL with a logo image base64 encoded."""
+  default(
+    """
+    Desired longest side the image in pixels. Defaults to 4096. Images are never cropped. Pass 0 to retrieve the original size (not recommended).
+    """
+    size: Int
+
+    """
+    The format of the image. When not provided, format of the original image will be used.
+    
+    Added in Saleor 3.13.
+    
+    Note: this API is currently in Feature Preview and can be subject to changes at later point.
+    """
+    format: IconThumbnailFormatEnum = ORIGINAL
+  ): String!
 }
 
 """

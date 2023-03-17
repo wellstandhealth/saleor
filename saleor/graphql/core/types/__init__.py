@@ -21,6 +21,7 @@ from .common import (
     File,
     GiftCardError,
     GiftCardSettingsError,
+    IconThumbnailField,
     Image,
     IntRangeInput,
     InvoiceError,
@@ -157,4 +158,5 @@ __all__ = [
     "IntFilterInput",
     "DateFilterInput",
     "DateTimeFilterInput",
+    "IconThumbnailField",
 ]
