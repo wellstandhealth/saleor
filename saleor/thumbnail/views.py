@@ -77,7 +77,7 @@ def handle_thumbnail(
 
     # prepare thumbnail
     processed_image = ProcessedImage(image.name, size_px, format)
-    thumbnail_file = processed_image.create_thumbnail()
+    thumbnail_file, _ = processed_image.create_thumbnail()
 
     thumbnail_file_name = prepare_thumbnail_file_name(image.name, size_px, format)
 

@@ -38,3 +38,19 @@ MIME_TYPE_TO_PIL_IDENTIFIER = {
     "image/x-xpm": "XPM",
     "image/webp": "WEBP",
 }
+PIL_IDENTIFIER_TO_MIME_TYPE = {v: k for k, v in MIME_TYPE_TO_PIL_IDENTIFIER.items()}
+
+# Icon images allowed file formats
+ICON_MIME_TYPES = ["image/png"]
+MIN_ICON_SIZE = 256
+MAX_ICON_SIZE = 2048
+
+
+class IconThumbnailFormat:
+    ORIGINAL = "original"
+    WEBP = "webp"
+
+    CHOICES = [
+        (ORIGINAL, "Original"),
+        (WEBP, "WebP"),
+    ]

@@ -1,16 +1,25 @@
+import os
+import secrets
 from io import BytesIO
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional, Union
 
 import graphene
 import magic
+from django.core.exceptions import ValidationError
+from django.core.files import File
 from django.core.files.storage import default_storage
 from django.urls import reverse
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from . import (
     DEFAULT_THUMBNAIL_SIZE,
+    ICON_MIME_TYPES,
+    MAX_ICON_SIZE,
     MIME_TYPE_TO_PIL_IDENTIFIER,
+    MIN_ICON_SIZE,
+    PIL_IDENTIFIER_TO_MIME_TYPE,
     THUMBNAIL_SIZES,
+    IconThumbnailFormat,
     ThumbnailFormat,
 )
 
@@ -67,6 +76,13 @@ def get_thumbnail_format(format: Optional[str]) -> Optional[str]:
     return format
 
 
+def get_icon_thumbnail_format(format: Optional[str]) -> Optional[str]:
+    """Return the icon thumbnail format if it's supported, otherwise None."""
+    if not format or format.lower() == IconThumbnailFormat.ORIGINAL:
+        return None
+    return format
+
+
 def prepare_thumbnail_file_name(
     file_name: str, size: int, format: Optional[str]
 ) -> str:
@@ -94,12 +110,12 @@ class ProcessedImage:
 
     def __init__(
         self,
-        image_path: str,
+        image_source: Union[str, File],
         size: int,
         format: Optional[str] = None,
         storage=default_storage,
     ):
-        self.image_path = image_path
+        self.image_source = image_source
         self.size = size
         self.format = format.upper() if format else None
         self.storage = storage
@@ -107,15 +123,17 @@ class ProcessedImage:
     def create_thumbnail(self):
         image, image_format = self.retrieve_image()
         image, save_kwargs = self.preprocess(image, image_format)
-        image_file = self.process_image(
+        image_file, thumbnail_format = self.process_image(
             image=image,
             save_kwargs=save_kwargs,
         )
-        return image_file
+        return image_file, thumbnail_format
 
     def retrieve_image(self):
-        """Return a PIL Image instance stored at `image_path`."""
-        image = self.storage.open(self.image_path, "rb")
+        """Return a PIL Image instance stored at `image_source`."""
+        image = self.image_source
+        if isinstance(self.image_source, str):
+            image = self.storage.open(self.image_source, "rb")
         image_format = self.get_image_metadata_from_file(image)
         return (Image.open(image), image_format)
 
@@ -151,7 +169,7 @@ class ProcessedImage:
                     arguments, return an empty dict ({}).
 
         """
-        format = self.format or image_format
+        format = self.format.upper() if self.format else image_format
         save_kwargs = {"format": format}
 
         # Ensuring image is properly rotated
@@ -220,4 +238,66 @@ class ProcessedImage:
             (self.size, self.size),
         )
         image.save(image_file, **save_kwargs)
-        return image_file
+        return image_file, save_kwargs["format"]
+
+
+class ProcessedIconImage(ProcessedImage):
+    LOSSLESS_WEBP = True
+
+
+def is_icon_image_mimetype(mimetype: Optional[str]) -> bool:
+    return mimetype in ICON_MIME_TYPES
+
+
+def get_filename_from_url(url: str) -> str:
+    file_name = os.path.basename(url)
+    name, format = os.path.splitext(file_name)
+    hash = secrets.token_hex(nbytes=4)
+    return f"{name}_{hash}{format}"
+
+
+def validate_image_format(img: Image, error_code: str, mimetypes: List[str] = []):
+    if mimetypes:
+        if not is_icon_image_mimetype(PIL_IDENTIFIER_TO_MIME_TYPE.get(img.format)):
+            msg = f"Invalid file format. Only: {', '.join(mimetypes)} supported"
+            raise ValidationError(msg, code=error_code)
+    try:
+        img.getexif()
+    except (SyntaxError, TypeError, UnidentifiedImageError) as e:
+        raise ValidationError(
+            "Invalid file. The following error was raised during the attempt "
+            f"of getting the exchangeable image file data: {str(e)}.",
+            code=error_code,
+        )
+
+
+def validate_image_size(
+    img: Image,
+    error_code: str,
+    min_size: Optional[int] = None,
+    max_size: Optional[int] = None,
+    is_square=False,
+):
+    if min_size and img.size < (min_size, min_size):
+        msg = f"Invalid file. Minimal accepted image size is {min_size}x{min_size}."
+        raise ValidationError(msg, code=error_code)
+    if max_size and img.size > (max_size, max_size):
+        msg = f"Invalid file. Maximal accepted image size is {max_size}x{max_size}."
+        raise ValidationError(msg, code=error_code)
+    if is_square and img.size[0] != img.size[1]:
+        msg = "Invalid file. Image must be square"
+        raise ValidationError(msg, code=error_code)
+
+
+def validate_icon_image(image_file, error_code: str):
+    try:
+        with Image.open(image_file) as image:
+            validate_image_format(image, error_code, ICON_MIME_TYPES)
+            validate_image_size(image, error_code, MIN_ICON_SIZE, MAX_ICON_SIZE, True)
+    except (SyntaxError, TypeError, UnidentifiedImageError) as e:
+        raise ValidationError(
+            "Invalid file. The following error was raised during the attempt "
+            f"of opening the file: {str(e)}",
+            code=error_code,
+        )
+    image_file.seek(0)
