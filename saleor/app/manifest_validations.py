@@ -2,7 +2,9 @@ import logging
 from collections import defaultdict
 from typing import Dict, Iterable, List, Optional
 
+import requests
 from django.core.exceptions import ValidationError
+from django.core.files.base import ContentFile
 from django.db.models import Value
 from django.db.models.functions import Concat
 from semantic_version import NpmSpec, Version
@@ -16,6 +18,11 @@ from ..permission.enums import (
     split_permission_codename,
 )
 from ..permission.models import Permission
+from ..thumbnail.utils import (
+    get_filename_from_url,
+    is_icon_image_mimetype,
+    validate_icon_image,
+)
 from ..webhook.event_types import WebhookEventAsyncType, WebhookEventSyncType
 from ..webhook.validators import custom_headers_validator
 from .error_codes import AppErrorCode
@@ -25,6 +32,7 @@ from .validators import AppURLValidator, brand_validator
 logger = logging.getLogger(__name__)
 
 T_ERRORS = Dict[str, List[ValidationError]]
+REQUEST_TIMEOUT = 25
 
 
 def _clean_app_url(url):
@@ -141,11 +149,10 @@ def clean_manifest_data(manifest_data, raise_for_saleor_version=False):
         clean_extensions(manifest_data, app_permissions, errors)
         clean_webhooks(manifest_data, errors)
 
-    if brand := manifest_data.get("brand"):
-        try:
-            manifest_data["brand"] = brand_validator(brand)
-        except ValidationError as e:
-            errors["brand"].append(e)
+    try:
+        manifest_data["brand"] = clean_brand(manifest_data)
+    except ValidationError as e:
+        errors["brand"].append(e)
 
     if errors:
         raise ValidationError(errors)
@@ -346,3 +353,30 @@ def clean_author(author) -> Optional[str]:
     raise ValidationError(
         "Incorrect value for field: author", code=AppErrorCode.INVALID.value
     )
+
+
+def fetch_icon_image(url: str, field_name: str) -> ContentFile:
+    filename = get_filename_from_url(url)
+    try:
+        with requests.get(url, stream=True, timeout=REQUEST_TIMEOUT) as res:
+            res.raise_for_status()
+            content_type = res.headers.get("content-type")
+            if not is_icon_image_mimetype(content_type):
+                msg = f"Invalid file type for: {field_name}."
+                raise ValidationError(msg, code=AppErrorCode.INVALID.value)
+            image_file = ContentFile(res.content, filename)
+    except requests.RequestException:
+        code = AppErrorCode.MANIFEST_URL_CANT_CONNECT.value
+        raise ValidationError(f"Unable to fetch image from: {field_name}.", code=code)
+
+    validate_icon_image(image_file, AppErrorCode.INVALID.value)
+    return image_file
+
+
+def clean_brand(manifest_data) -> Optional[Dict]:
+    brand_data = manifest_data.get("brand")
+    if not brand_data:
+        return None
+    brand_validator(brand_data)
+    logo_file = fetch_icon_image(brand_data["logo"]["default"], "logo.default")
+    return {"logo": {"default": logo_file}}

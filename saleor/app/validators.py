@@ -1,9 +1,10 @@
+import mimetypes
 import re
-from typing import Dict
 
 from django.core.exceptions import ValidationError
-from django.core.validators import RegexValidator, URLValidator
+from django.core.validators import URLValidator
 
+from ..thumbnail.utils import is_icon_image_mimetype
 from .error_codes import AppErrorCode
 
 
@@ -25,28 +26,19 @@ image_url_validator = AppURLValidator(
     message="Incorrect value for field: logo.default.",
     code=AppErrorCode.INVALID_URL_FORMAT.value,
 )
-color_string_validator = RegexValidator(
-    regex=re.compile(r"^#([A-Fa-f0-9]{6})$"),
-    message="Incorrect value for field: colors.icon.",
-    code=AppErrorCode.INVALID.value,
-)
 
 
-def brand_validator(brand) -> Dict:
-    missing_fields = []
+def brand_validator(brand):
     try:
         logo_url = brand["logo"]["default"]
     except (TypeError, KeyError):
-        missing_fields.append("logo.default")
-    try:
-        icon_color = brand["colors"]["icon"]
-    except (TypeError, KeyError):
-        missing_fields.append("colors.icon")
-    if missing_fields:
         raise ValidationError(
-            "Missing required fields for brand info: " f'{", ".join(missing_fields)}.',
-            code=AppErrorCode.REQUIRED.value,
+            "Missing required field: logo.default.", code=AppErrorCode.REQUIRED.value
         )
     image_url_validator(logo_url)
-    color_string_validator(icon_color)
-    return {"logo": {"default": logo_url}, "colors": {"icon": icon_color}}
+    filetype = mimetypes.guess_type(logo_url)[0]
+    if not is_icon_image_mimetype(filetype):
+        raise ValidationError(
+            "Invalid file type for field: logo.default.",
+            code=AppErrorCode.INVALID_URL_FORMAT.value,
+        )
