@@ -290,7 +290,7 @@ class CheckoutPaymentCreate(BaseMutation, I18nMixin):
         checkout_id=None,
         id=None,
         input,
-        token=None
+        token=None,
     ):
         checkout = get_checkout(cls, info, checkout_id=checkout_id, token=token, id=id)
 
@@ -341,7 +341,6 @@ class CheckoutPaymentCreate(BaseMutation, I18nMixin):
             checkout_info=checkout_info,
             lines=lines,
             address=address,
-            discounts=discounts,
         )
         amount = input.get("amount", checkout_total.gross.amount)
         clean_checkout_shipping(checkout_info, lines, PaymentErrorCode)
@@ -1002,7 +1001,7 @@ class TransactionCreate(BaseMutation):
         *,
         id: str,
         transaction: Dict,
-        transaction_event=None
+        transaction_event=None,
     ):
         order_or_checkout_instance = cls.get_node_or_error(info, id)
 
@@ -1239,7 +1238,7 @@ class TransactionUpdate(TransactionCreate):
         *,
         id: str,
         transaction=None,
-        transaction_event=None
+        transaction_event=None,
     ):
         app = get_app_promise(info.context).get()
         user = info.context.user
