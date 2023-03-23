@@ -919,7 +919,6 @@ class Checkout(ModelObjectType[models.Checkout]):
                 checkout_info=checkout_info,
                 lines=lines,
                 address=address,
-                discounts=discounts,
             )
             checkout_total = max(taxed_total, zero_taxed_money(root.currency))
             total_charged = zero_money(root.currency)
