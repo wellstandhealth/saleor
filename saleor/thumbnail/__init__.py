@@ -48,8 +48,10 @@ MIN_ICON_SIZE = 256
 class IconThumbnailFormat:
     ORIGINAL = "original"
     WEBP = "webp"
+    PNG = "png"
 
     CHOICES = [
         (ORIGINAL, "Original"),
         (WEBP, "WebP"),
+        (PNG, "PNG"),
     ]
