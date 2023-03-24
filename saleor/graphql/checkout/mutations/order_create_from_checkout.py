@@ -145,7 +145,6 @@ class OrderCreateFromCheckout(BaseMutation):
             order = create_order_from_checkout(
                 checkout_info=checkout_info,
                 checkout_lines=checkout_lines,
-                discounts=discounts,
                 manager=manager,
                 user=user,
                 app=app,
