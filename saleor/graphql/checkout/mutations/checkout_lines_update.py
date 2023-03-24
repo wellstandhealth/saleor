@@ -134,7 +134,6 @@ class CheckoutLinesUpdate(CheckoutLinesAdd):
         checkout_info,
         lines,
         manager,
-        discounts,
         replace,
     ):
         app = get_app_promise(info.context).get()
@@ -163,7 +162,6 @@ class CheckoutLinesUpdate(CheckoutLinesAdd):
             checkout_info,
             lines,
             manager,
-            discounts,
             replace,
         )
 
