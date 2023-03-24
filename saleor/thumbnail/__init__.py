@@ -43,7 +43,6 @@ PIL_IDENTIFIER_TO_MIME_TYPE = {v: k for k, v in MIME_TYPE_TO_PIL_IDENTIFIER.item
 # Icon images allowed file formats
 ICON_MIME_TYPES = ["image/png"]
 MIN_ICON_SIZE = 256
-MAX_ICON_SIZE = 2048
 
 
 class IconThumbnailFormat:

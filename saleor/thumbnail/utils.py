@@ -14,7 +14,6 @@ from PIL import Image, UnidentifiedImageError
 from . import (
     DEFAULT_THUMBNAIL_SIZE,
     ICON_MIME_TYPES,
-    MAX_ICON_SIZE,
     MIME_TYPE_TO_PIL_IDENTIFIER,
     MIN_ICON_SIZE,
     PIL_IDENTIFIER_TO_MIME_TYPE,
@@ -293,7 +292,7 @@ def validate_icon_image(image_file, error_code: str):
     try:
         with Image.open(image_file) as image:
             validate_image_format(image, error_code, ICON_MIME_TYPES)
-            validate_image_size(image, error_code, MIN_ICON_SIZE, MAX_ICON_SIZE, True)
+            validate_image_size(image, error_code, MIN_ICON_SIZE, is_square=True)
     except (SyntaxError, TypeError, UnidentifiedImageError) as e:
         raise ValidationError(
             "Invalid file. The following error was raised during the attempt "
