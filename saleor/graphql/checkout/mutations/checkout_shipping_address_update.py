@@ -186,7 +186,6 @@ class CheckoutShippingAddressUpdate(BaseMutation, I18nMixin):
                 checkout_info,
                 shipping_address_instance,
                 lines,
-                discounts,
                 manager,
                 shipping_channel_listings,
             )
