@@ -1356,7 +1356,6 @@ def complete_checkout_with_payment(
     lines: Iterable["CheckoutLineInfo"],
     payment_data,
     store_source,
-    discounts,
     user,
     app,
     site_settings=None,
@@ -1371,7 +1370,6 @@ def complete_checkout_with_payment(
     for thread race.
     :raises ValidationError
     """
-    # TODO Owczar: Drop discounts
     with transaction_with_commit_on_errors():
         payment, customer_id, order_data = complete_checkout_pre_payment_part(
             manager=manager,
