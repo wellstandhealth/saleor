@@ -330,7 +330,11 @@ def test_get_discount_for_checkout_value_entire_order_voucher(
 
     # when
     discount = get_voucher_discount_for_checkout(
-        manager, voucher, checkout_info, lines, None, []
+        manager,
+        voucher,
+        checkout_info,
+        lines,
+        None,
     )
 
     # then
@@ -482,7 +486,11 @@ def test_get_discount_for_checkout_value_specific_product_voucher(
 
     # when
     discount = get_voucher_discount_for_checkout(
-        manager, voucher, checkout_info, lines, None, []
+        manager,
+        voucher,
+        checkout_info,
+        lines,
+        None,
     )
 
     # then
@@ -571,7 +579,7 @@ def test_get_discount_for_checkout_entire_order_voucher_not_applicable(
     )
     manager = get_plugins_manager()
     with pytest.raises(NotApplicable):
-        get_voucher_discount_for_checkout(manager, voucher, checkout_info, [], None, [])
+        get_voucher_discount_for_checkout(manager, voucher, checkout_info, [], None)
 
 
 @pytest.mark.parametrize(
@@ -742,11 +750,8 @@ def test_get_discount_for_checkout_specific_products_voucher_not_applicable(
         valid_pick_up_points=[],
         all_shipping_methods=[],
     )
-    discounts = []
     with pytest.raises(NotApplicable):
-        get_voucher_discount_for_checkout(
-            manager, voucher, checkout_info, [], None, discounts
-        )
+        get_voucher_discount_for_checkout(manager, voucher, checkout_info, [], None)
 
 
 @pytest.mark.parametrize(
@@ -856,7 +861,7 @@ def test_get_discount_for_checkout_shipping_voucher(
     )
 
     discount = get_voucher_discount_for_checkout(
-        manager, voucher, checkout_info, [], None, None
+        manager, voucher, checkout_info, [], None
     )
     assert discount == Money(expected_value, "USD")
 
@@ -907,7 +912,7 @@ def test_get_discount_for_checkout_shipping_voucher_all_countries(
         all_shipping_methods=[],
     )
     discount = get_voucher_discount_for_checkout(
-        manager, voucher, checkout_info, [], None, None
+        manager, voucher, checkout_info, [], None
     )
 
     assert discount == Money(5, "USD")
@@ -954,7 +959,13 @@ def test_get_discount_for_checkout_shipping_voucher_limited_countries(
     )
     manager = get_plugins_manager()
     with pytest.raises(NotApplicable):
-        get_voucher_discount_for_checkout(manager, voucher, checkout_info, [], None, [])
+        get_voucher_discount_for_checkout(
+            manager,
+            voucher,
+            checkout_info,
+            [],
+            None,
+        )
 
 
 @pytest.mark.parametrize(
@@ -1099,7 +1110,6 @@ def test_get_discount_for_checkout_shipping_voucher_not_applicable(
             checkout_info,
             [],
             checkout.shipping_address,
-            None,
         )
     assert str(e.value) == error_msg
 
