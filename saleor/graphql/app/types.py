@@ -3,7 +3,7 @@ from typing import List, Union
 import graphene
 
 from ...app import models
-from ...app.types import AppExtensionTarget
+from ...app.types import AppEventRequestor, AppEventType, AppExtensionTarget
 from ...core.exceptions import PermissionDenied
 from ...core.jwt import JWT_THIRDPARTY_ACCESS_TYPE
 from ...permission.auth_filters import AuthorizationFilters
@@ -11,7 +11,7 @@ from ...permission.enums import AppPermission
 from ...permission.utils import message_one_of_permissions_required
 from ..account.utils import is_owner_or_has_one_of_perms
 from ..core import ResolveInfo, SaleorContext
-from ..core.connection import CountableConnection
+from ..core.connection import CountableConnection, create_connection_slice
 from ..core.descriptions import (
     ADDED_IN_31,
     ADDED_IN_35,
@@ -22,6 +22,7 @@ from ..core.descriptions import (
 )
 from ..core.doc_category import DOC_CATEGORY_APPS
 from ..core.federation import federated_entity, resolve_federation_references
+from ..core.fields import ConnectionField
 from ..core.types import BaseObjectType, Job, ModelObjectType, NonNullList, Permission
 from ..core.utils import from_global_id_or_error
 from ..meta.types import ObjectWithMetadata
@@ -29,7 +30,13 @@ from ..utils import format_permissions_for_display, get_user_or_app_from_context
 from ..webhook.enums import WebhookEventTypeAsyncEnum, WebhookEventTypeSyncEnum
 from ..webhook.types import Webhook
 from .dataloaders import AppByIdLoader, AppExtensionByAppIdLoader, app_promise_callback
-from .enums import AppExtensionMountEnum, AppExtensionTargetEnum, AppTypeEnum
+from .enums import (
+    AppEventRequestorEnum,
+    AppEventTypeEnum,
+    AppExtensionMountEnum,
+    AppExtensionTargetEnum,
+    AppTypeEnum,
+)
 from .resolvers import (
     resolve_access_token_for_app,
     resolve_access_token_for_app_extension,
@@ -299,6 +306,68 @@ class AppToken(BaseObjectType):
         return root.token_last_4
 
 
+class AppEvent(graphene.Interface):
+    id = graphene.GlobalID(required=True)
+    date = graphene.types.datetime.DateTime(
+        description="Date when event happened at in ISO 8601 format."
+    )
+    event_type = AppEventTypeEnum(description="App event type.")
+    requestor_type = AppEventRequestorEnum(description="Requestor type.")
+    requestor = graphene.Field("saleor.graphql.app.events.AppEventRequestor")
+
+    @classmethod
+    def resolve_type(cls, instance: models.AppEvent, info):
+        if instance.type == AppEventType.INSTALLED:
+            return AppEventInstalled
+        elif instance.type == AppEventType.ACTIVATED:
+            return AppEventActivated
+        elif instance.type == AppEventType.DEACTIVATED:
+            return AppEventDeactivated
+
+    @staticmethod
+    def resolve_event_type(root: models.AppEvent, _info: ResolveInfo):
+        return root.type
+
+    @staticmethod
+    def resolve_requestor_type(root: models.AppEvent, _info: ResolveInfo):
+        if root.requestor_user_id:
+            return AppEventRequestor.USER
+        elif root.requestor_app_id:
+            return AppEventRequestor.APP
+        return AppEventRequestor.SALEOR
+
+    @staticmethod
+    def resolve_requestor(root: models.AppEvent, _info: ResolveInfo):
+        if root.requestor_user_id:
+            return root.requestor_user
+        elif root.requestor_app_id:
+            return root.requestor_app
+        return None
+
+
+class AppEventCountableConnection(CountableConnection):
+    class Meta:
+        node = AppEvent
+
+
+class AppEventInstalled(ModelObjectType[models.AppEvent]):
+    class Meta:
+        interfaces = [graphene.relay.Node, AppEvent]
+        model = models.AppEvent
+
+
+class AppEventActivated(ModelObjectType[models.AppEvent]):
+    class Meta:
+        interfaces = [graphene.relay.Node, AppEvent]
+        model = models.AppEvent
+
+
+class AppEventDeactivated(ModelObjectType[models.AppEvent]):
+    class Meta:
+        interfaces = [graphene.relay.Node, AppEvent]
+        model = models.AppEvent
+
+
 @federated_entity("id")
 class App(ModelObjectType[models.App]):
     id = graphene.GlobalID(required=True)
@@ -361,6 +430,7 @@ class App(ModelObjectType[models.App]):
         description="App's dashboard extensions." + ADDED_IN_31 + PREVIEW_FEATURE,
         required=True,
     )
+    events = ConnectionField(AppEventCountableConnection)
 
     class Meta:
         description = "Represents app data."
@@ -425,6 +495,11 @@ class App(ModelObjectType[models.App]):
     def resolve_metafields(root: models.App, info: ResolveInfo, app, *, keys=None):
         check_permission_for_access_to_meta(root, info, app)
         return ObjectWithMetadata.resolve_metafields(root, info, keys=keys)
+
+    @staticmethod
+    def resolve_events(root: models.App, info: ResolveInfo, **kwargs):
+        qs = root.events.all()
+        return create_connection_slice(qs, info, kwargs, AppEventCountableConnection)
 
 
 class AppCountableConnection(CountableConnection):

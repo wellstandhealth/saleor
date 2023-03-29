@@ -5,6 +5,7 @@ from django.utils.functional import SimpleLazyObject
 from ..graphql.notifications.schema import ExternalNotificationMutations
 from .account.schema import AccountMutations, AccountQueries
 from .app.schema import AppMutations, AppQueries
+from .app.types import AppEventActivated, AppEventDeactivated, AppEventInstalled
 from .attribute.schema import AttributeMutations, AttributeQueries
 from .channel.schema import ChannelMutations, ChannelQueries
 from .checkout.schema import CheckoutMutations, CheckoutQueries
@@ -116,7 +117,9 @@ GraphQLDocDirective = graphql.GraphQLDirective(
 schema = build_federated_schema(
     Query,
     mutation=Mutation,
-    types=unit_enums + list(WEBHOOK_TYPES_MAP.values()),
+    types=unit_enums
+    + list(WEBHOOK_TYPES_MAP.values())
+    + [AppEventInstalled, AppEventActivated, AppEventDeactivated],
     subscription=Subscription,
     directives=graphql.specified_directives + [GraphQLDocDirective],
 )

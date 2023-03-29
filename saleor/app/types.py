@@ -60,6 +60,8 @@ class AppExtensionTarget:
 
 
 class AppEventType:
+    """All app event types."""
+
     INSTALLED = "installed"
     ACTIVATED = "activated"
     DEACTIVATED = "deactivated"
@@ -68,4 +70,18 @@ class AppEventType:
         (INSTALLED, "App was installed"),
         (ACTIVATED, "App was activated"),
         (DEACTIVATED, "App was deactivated"),
+    ]
+
+
+class AppEventRequestor:
+    """The different order emails event types."""
+
+    SALEOR = "saleor"
+    USER = "user"
+    APP = "app"
+
+    CHOICES = [
+        (SALEOR, "App event triggered by Saleor"),
+        (USER, "App event triggered by user"),
+        (APP, "App event triggered by app"),
     ]
