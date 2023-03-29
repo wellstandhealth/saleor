@@ -57,3 +57,15 @@ class AppExtensionTarget:
     APP_PAGE = "app_page"
 
     CHOICES = [(POPUP, "popup"), (APP_PAGE, "app_page")]
+
+
+class AppEventType:
+    INSTALLED = "installed"
+    ACTIVATED = "activated"
+    DEACTIVATED = "deactivated"
+
+    CHOICES = [
+        (INSTALLED, "App was installed"),
+        (ACTIVATED, "App was activated"),
+        (DEACTIVATED, "App was deactivated"),
+    ]
