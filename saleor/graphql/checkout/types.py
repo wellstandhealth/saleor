@@ -44,7 +44,6 @@ from ..core.tracing import traced_resolver
 from ..core.types import BaseObjectType, ModelObjectType, Money, NonNullList, TaxedMoney
 from ..core.utils import str_to_enum
 from ..decorators import one_of_permissions_required
-from ..discount.dataloaders import DiscountsByDateTimeLoader
 from ..giftcard.types import GiftCard
 from ..meta import resolvers as MetaResolvers
 from ..meta.types import ObjectWithMetadata, _filter_metadata
@@ -81,7 +80,6 @@ from .utils import prevent_sync_event_circular_query
 if TYPE_CHECKING:
     from ...account.models import Address
     from ...checkout.fetch import CheckoutInfo, CheckoutLineInfo
-    from ...discount import DiscountInfo
     from ...plugins.manager import PluginsManager
 
 
@@ -91,17 +89,14 @@ def get_dataloaders_for_fetching_checkout_data(
     Optional[Promise["Address"]],
     Promise[list["CheckoutLineInfo"]],
     Promise["CheckoutInfo"],
-    Promise[list["DiscountInfo"]],
     Promise["PluginsManager"],
 ]:
-    # TODO Owczar: drop discounts
     address_id = root.shipping_address_id or root.billing_address_id
     address = AddressByIdLoader(info.context).load(address_id) if address_id else None
     lines = CheckoutLinesInfoByCheckoutTokenLoader(info.context).load(root.token)
     checkout_info = CheckoutInfoByCheckoutTokenLoader(info.context).load(root.token)
-    discounts = DiscountsByDateTimeLoader(info.context).load(info.context.request_time)
     manager = get_plugin_manager_promise(info.context)
-    return address, lines, checkout_info, discounts, manager
+    return address, lines, checkout_info, manager
 
 
 class GatewayConfigLine(BaseObjectType):
@@ -606,7 +601,7 @@ class Checkout(ModelObjectType[models.Checkout]):
     @prevent_sync_event_circular_query
     def resolve_total_price(root: models.Checkout, info: ResolveInfo):
         def calculate_total_price(data):
-            address, lines, checkout_info, discounts, manager = data
+            address, lines, checkout_info, manager = data
             taxed_total = calculations.calculate_checkout_total_with_gift_cards(
                 manager=manager,
                 checkout_info=checkout_info,
@@ -623,7 +618,7 @@ class Checkout(ModelObjectType[models.Checkout]):
     @prevent_sync_event_circular_query
     def resolve_subtotal_price(root: models.Checkout, info: ResolveInfo):
         def calculate_subtotal_price(data):
-            address, lines, checkout_info, discounts, manager = data
+            address, lines, checkout_info, manager = data
             return calculations.checkout_subtotal(
                 manager=manager,
                 checkout_info=checkout_info,
@@ -639,7 +634,7 @@ class Checkout(ModelObjectType[models.Checkout]):
     @prevent_sync_event_circular_query
     def resolve_shipping_price(root: models.Checkout, info: ResolveInfo):
         def calculate_shipping_price(data):
-            address, lines, checkout_info, discounts, manager = data
+            address, lines, checkout_info, manager = data
             return calculations.checkout_shipping_price(
                 manager=manager,
                 checkout_info=checkout_info,
@@ -873,7 +868,7 @@ class Checkout(ModelObjectType[models.Checkout]):
     @classmethod
     def resolve_authorize_status(cls, root: models.Checkout, info):
         def _resolve_authorize_status(data):
-            address, lines, checkout_info, discounts, manager, transactions = data
+            address, lines, checkout_info, manager, transactions = data
             fetch_checkout_data(
                 checkout_info=checkout_info,
                 manager=manager,
@@ -892,7 +887,7 @@ class Checkout(ModelObjectType[models.Checkout]):
     @classmethod
     def resolve_charge_status(cls, root: models.Checkout, info):
         def _resolve_charge_status(data):
-            address, lines, checkout_info, discounts, manager, transactions = data
+            address, lines, checkout_info, manager, transactions = data
             fetch_checkout_data(
                 checkout_info=checkout_info,
                 manager=manager,
