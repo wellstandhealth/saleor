@@ -53,6 +53,7 @@ from .resolvers import (
     resolve_access_token_for_app_extension,
     resolve_app_extension_url,
 )
+from .sorters import AppEventSortingInput
 
 
 def has_required_permission(app: models.App, context: SaleorContext):
@@ -433,6 +434,7 @@ class App(ModelObjectType[models.App]):
     events = FilterConnectionField(
         AppEventCountableConnection,
         filter=AppEventFilterInput(description="Filtering options for app events."),
+        sort_by=AppEventSortingInput(description="Sort app events."),
     )
 
     class Meta:

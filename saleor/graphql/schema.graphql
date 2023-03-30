@@ -2703,6 +2703,9 @@ type App implements Node & ObjectWithMetadata @doc(category: "Apps") {
     """Filtering options for app events."""
     filter: AppEventFilterInput
 
+    """Sort app events."""
+    sortBy: AppEventSortingInput
+
     """Return the elements in the list that come before the specified cursor."""
     before: String
 
@@ -9919,6 +9922,19 @@ type PaymentSource @doc(category: "Payments") {
 input AppEventFilterInput {
   type: AppEventTypeEnum
   createdAt: DateTimeRangeInput
+}
+
+input AppEventSortingInput {
+  """Specifies the direction in which to sort products."""
+  direction: OrderDirection!
+
+  """Sort events by the selected field."""
+  field: AppEventSortField!
+}
+
+enum AppEventSortField {
+  """Sort app events by creation date."""
+  CREATION_DATE
 }
 
 type EventDeliveryCountableConnection {
