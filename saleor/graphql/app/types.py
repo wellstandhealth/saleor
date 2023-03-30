@@ -3,7 +3,7 @@ from typing import List, Union
 import graphene
 
 from ...app import models
-from ...app.types import AppEventRequestor, AppEventType, AppExtensionTarget
+from ...app.types import AppEventType, AppExtensionTarget
 from ...core.exceptions import PermissionDenied
 from ...core.jwt import JWT_THIRDPARTY_ACCESS_TYPE
 from ...permission.auth_filters import AuthorizationFilters
@@ -31,7 +31,6 @@ from ..webhook.enums import WebhookEventTypeAsyncEnum, WebhookEventTypeSyncEnum
 from ..webhook.types import Webhook
 from .dataloaders import AppByIdLoader, AppExtensionByAppIdLoader, app_promise_callback
 from .enums import (
-    AppEventRequestorEnum,
     AppEventTypeEnum,
     AppExtensionMountEnum,
     AppExtensionTargetEnum,
@@ -312,29 +311,15 @@ class AppEvent(graphene.Interface):
         description="Date when event happened at in ISO 8601 format."
     )
     event_type = AppEventTypeEnum(description="App event type.")
-    requestor_type = AppEventRequestorEnum(description="Requestor type.")
     requestor = graphene.Field("saleor.graphql.app.events.AppEventRequestor")
 
     @classmethod
-    def resolve_type(cls, instance: models.AppEvent, info):
-        if instance.type == AppEventType.INSTALLED:
-            return AppEventInstalled
-        elif instance.type == AppEventType.ACTIVATED:
-            return AppEventActivated
-        elif instance.type == AppEventType.DEACTIVATED:
-            return AppEventDeactivated
+    def resolve_type(cls, instance: models.AppEvent, _info):
+        return APP_EVENTS_MAP.get(instance.type)
 
     @staticmethod
     def resolve_event_type(root: models.AppEvent, _info: ResolveInfo):
         return root.type
-
-    @staticmethod
-    def resolve_requestor_type(root: models.AppEvent, _info: ResolveInfo):
-        if root.requestor_user_id:
-            return AppEventRequestor.USER
-        elif root.requestor_app_id:
-            return AppEventRequestor.APP
-        return AppEventRequestor.SALEOR
 
     @staticmethod
     def resolve_requestor(root: models.AppEvent, _info: ResolveInfo):
@@ -517,3 +502,10 @@ class AppInstallation(ModelObjectType[models.AppInstallation]):
         model = models.AppInstallation
         description = "Represents ongoing installation of app."
         interfaces = [graphene.relay.Node, Job]
+
+
+APP_EVENTS_MAP = {
+    AppEventType.INSTALLED: AppEventInstalled,
+    AppEventType.ACTIVATED: AppEventActivated,
+    AppEventType.DEACTIVATED: AppEventDeactivated,
+}

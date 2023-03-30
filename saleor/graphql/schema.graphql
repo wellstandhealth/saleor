@@ -2930,9 +2930,6 @@ interface AppEvent {
 
   """App event type."""
   eventType: AppEventTypeEnum
-
-  """Requestor type."""
-  requestorType: AppEventRequestorEnum
   requestor: AppEventRequestor
 }
 
@@ -2941,13 +2938,6 @@ enum AppEventTypeEnum {
   INSTALLED
   ACTIVATED
   DEACTIVATED
-}
-
-"""The different order emails event types."""
-enum AppEventRequestorEnum {
-  SALEOR
-  USER
-  APP
 }
 
 union AppEventRequestor = User | App
@@ -29306,9 +29296,6 @@ type AppEventInstalled implements Node & AppEvent {
 
   """App event type."""
   eventType: AppEventTypeEnum
-
-  """Requestor type."""
-  requestorType: AppEventRequestorEnum
   requestor: AppEventRequestor
 }
 
@@ -29320,9 +29307,6 @@ type AppEventActivated implements Node & AppEvent {
 
   """App event type."""
   eventType: AppEventTypeEnum
-
-  """Requestor type."""
-  requestorType: AppEventRequestorEnum
   requestor: AppEventRequestor
 }
 
@@ -29334,9 +29318,6 @@ type AppEventDeactivated implements Node & AppEvent {
 
   """App event type."""
   eventType: AppEventTypeEnum
-
-  """Requestor type."""
-  requestorType: AppEventRequestorEnum
   requestor: AppEventRequestor
 }
 
