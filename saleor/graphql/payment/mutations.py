@@ -1049,11 +1049,8 @@ class TransactionCreate(BaseMutation):
                 ]
             )
         if transaction_data.get("checkout_id") and money_data:
-            discounts = load_discounts(info.context)
             manager = get_plugin_manager_promise(info.context).get()
-            transaction_amounts_for_checkout_updated(
-                new_transaction, discounts, manager
-            )
+            transaction_amounts_for_checkout_updated(new_transaction, manager)
 
         if transaction_event:
             cls.create_transaction_event(transaction_event, new_transaction, user, app)
@@ -1200,9 +1197,8 @@ class TransactionUpdate(TransactionCreate):
             order = cast(order_models.Order, instance.order)
             cls.update_order(order, money_data, psp_reference)
         if instance.checkout_id and money_data:
-            discounts = load_discounts(info.context)
             manager = get_plugin_manager_promise(info.context).get()
-            transaction_amounts_for_checkout_updated(instance, discounts, manager)
+            transaction_amounts_for_checkout_updated(instance, manager)
 
     @classmethod
     def update_order(
@@ -1580,11 +1576,8 @@ class TransactionEventReport(ModelMutation):
                     ]
                 )
             if transaction.checkout_id:
-                discounts = load_discounts(info.context)
                 manager = get_plugin_manager_promise(info.context).get()
-                transaction_amounts_for_checkout_updated(
-                    transaction, discounts, manager
-                )
+                transaction_amounts_for_checkout_updated(transaction, manager)
 
         return cls(
             already_processed=already_processed,

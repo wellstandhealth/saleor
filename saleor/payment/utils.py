@@ -21,7 +21,6 @@ from ..checkout.models import Checkout
 from ..core.prices import quantize_price
 from ..core.tracing import traced_atomic_transaction
 from ..discount import DiscountInfo
-from ..discount.utils import fetch_active_discounts
 from ..graphql.core.utils import str_to_enum
 from ..order.models import Order
 from ..order.search import update_order_search_vector
@@ -1142,9 +1141,7 @@ def create_transaction_event_for_transaction_session(
         if transaction_item.order_id:
             update_order_with_transaction_details(transaction_item)
         elif transaction_item.checkout_id:
-            transaction_amounts_for_checkout_updated(
-                transaction_item, discounts, manager
-            )
+            transaction_amounts_for_checkout_updated(transaction_item, manager)
     return event
 
 
@@ -1180,9 +1177,8 @@ def create_transaction_event_from_request_and_webhook_response(
     if transaction_item.order_id:
         update_order_with_transaction_details(transaction_item)
     elif transaction_item.checkout_id:
-        discounts = fetch_active_discounts()
         manager = get_plugins_manager()
-        transaction_amounts_for_checkout_updated(transaction_item, discounts, manager)
+        transaction_amounts_for_checkout_updated(transaction_item, manager)
     return event
 
 
