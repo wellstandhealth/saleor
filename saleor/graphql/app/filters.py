@@ -44,7 +44,7 @@ def filter_app_event_type(qs, _, value):
 
 
 def filter_created_at(qs, _, value):
-    return filter_range_field(qs, "date", value)
+    return filter_range_field(qs, "created_at", value)
 
 
 class AppFilter(django_filters.FilterSet):

@@ -2927,9 +2927,7 @@ type AppEventCountableEdge {
 
 interface AppEvent {
   id: ID!
-
-  """Date when event happened at in ISO 8601 format."""
-  date: DateTime
+  createdAt: DateTime!
 
   """App event type."""
   eventType: AppEventTypeEnum
@@ -29298,9 +29296,7 @@ type TransactionProcessSession implements Event {
 
 type AppEventInstalled implements Node & AppEvent {
   id: ID!
-
-  """Date when event happened at in ISO 8601 format."""
-  date: DateTime
+  createdAt: DateTime!
 
   """App event type."""
   eventType: AppEventTypeEnum
@@ -29309,9 +29305,7 @@ type AppEventInstalled implements Node & AppEvent {
 
 type AppEventActivated implements Node & AppEvent {
   id: ID!
-
-  """Date when event happened at in ISO 8601 format."""
-  date: DateTime
+  createdAt: DateTime!
 
   """App event type."""
   eventType: AppEventTypeEnum
@@ -29320,9 +29314,7 @@ type AppEventActivated implements Node & AppEvent {
 
 type AppEventDeactivated implements Node & AppEvent {
   id: ID!
-
-  """Date when event happened at in ISO 8601 format."""
-  date: DateTime
+  createdAt: DateTime!
 
   """App event type."""
   eventType: AppEventTypeEnum

@@ -319,10 +319,7 @@ class AppToken(BaseObjectType):
 
 class AppEvent(graphene.Interface):
     id = graphene.GlobalID(required=True)
-    date = graphene.types.datetime.DateTime(
-        description="Date when event happened at in ISO 8601 format."
-    )
-    # created_at = graphene.DateTime(required=True)
+    created_at = graphene.DateTime(required=True)
     event_type = AppEventTypeEnum(description="App event type.")
     requestor = graphene.Field("saleor.graphql.app.events.AppEventRequestor")
 

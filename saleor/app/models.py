@@ -180,7 +180,7 @@ class AppInstallation(Job):
 
 class AppEvent(models.Model):
     app = models.ForeignKey(App, related_name="events", on_delete=models.CASCADE)
-    date = models.DateTimeField(auto_now_add=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     type = models.CharField(
         max_length=255,
         choices=[(name, name) for name, _ in AppEventType.CHOICES],
@@ -194,7 +194,7 @@ class AppEvent(models.Model):
     )
 
     class Meta:
-        ordering = ("date",)
+        ordering = ("created_at",)
 
     def __repr__(self):
         return f"{self.__class__.__name__}(type={self.type!r}, app={self.app!r})"
