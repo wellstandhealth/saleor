@@ -184,6 +184,7 @@ class AppEvent(models.Model):
     type = models.CharField(
         max_length=255,
         choices=[(name, name) for name, _ in AppEventType.CHOICES],
+        db_index=True,
     )
     requestor_user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="+", null=True

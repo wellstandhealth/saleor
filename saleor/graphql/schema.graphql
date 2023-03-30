@@ -2700,6 +2700,9 @@ type App implements Node & ObjectWithMetadata @doc(category: "Apps") {
   """
   extensions: [AppExtension!]!
   events(
+    """Filtering options for app events."""
+    filter: AppEventFilterInput
+
     """Return the elements in the list that come before the specified cursor."""
     before: String
 
@@ -9913,6 +9916,11 @@ type PaymentSource @doc(category: "Payments") {
   Can be accessed without permissions.
   """
   metadata: [MetadataItem!]!
+}
+
+input AppEventFilterInput {
+  type: AppEventTypeEnum
+  createdAt: DateTimeRangeInput
 }
 
 type EventDeliveryCountableConnection {

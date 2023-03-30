@@ -11,7 +11,11 @@ from ...permission.enums import AppPermission
 from ...permission.utils import message_one_of_permissions_required
 from ..account.utils import is_owner_or_has_one_of_perms
 from ..core import ResolveInfo, SaleorContext
-from ..core.connection import CountableConnection, create_connection_slice
+from ..core.connection import (
+    CountableConnection,
+    create_connection_slice,
+    filter_connection_queryset,
+)
 from ..core.descriptions import (
     ADDED_IN_31,
     ADDED_IN_35,
@@ -22,8 +26,15 @@ from ..core.descriptions import (
 )
 from ..core.doc_category import DOC_CATEGORY_APPS
 from ..core.federation import federated_entity, resolve_federation_references
-from ..core.fields import ConnectionField
-from ..core.types import BaseObjectType, Job, ModelObjectType, NonNullList, Permission
+from ..core.fields import FilterConnectionField
+from ..core.types import (
+    BaseObjectType,
+    FilterInputObjectType,
+    Job,
+    ModelObjectType,
+    NonNullList,
+    Permission,
+)
 from ..core.utils import from_global_id_or_error
 from ..meta.types import ObjectWithMetadata
 from ..utils import format_permissions_for_display, get_user_or_app_from_context
@@ -36,6 +47,7 @@ from .enums import (
     AppExtensionTargetEnum,
     AppTypeEnum,
 )
+from .filters import AppEventFilter
 from .resolvers import (
     resolve_access_token_for_app,
     resolve_access_token_for_app_extension,
@@ -310,6 +322,7 @@ class AppEvent(graphene.Interface):
     date = graphene.types.datetime.DateTime(
         description="Date when event happened at in ISO 8601 format."
     )
+    # created_at = graphene.DateTime(required=True)
     event_type = AppEventTypeEnum(description="App event type.")
     requestor = graphene.Field("saleor.graphql.app.events.AppEventRequestor")
 
@@ -351,6 +364,11 @@ class AppEventDeactivated(ModelObjectType[models.AppEvent]):
     class Meta:
         interfaces = [graphene.relay.Node, AppEvent]
         model = models.AppEvent
+
+
+class AppEventFilterInput(FilterInputObjectType):
+    class Meta:
+        filterset_class = AppEventFilter
 
 
 @federated_entity("id")
@@ -415,7 +433,10 @@ class App(ModelObjectType[models.App]):
         description="App's dashboard extensions." + ADDED_IN_31 + PREVIEW_FEATURE,
         required=True,
     )
-    events = ConnectionField(AppEventCountableConnection)
+    events = FilterConnectionField(
+        AppEventCountableConnection,
+        filter=AppEventFilterInput(description="Filtering options for app events."),
+    )
 
     class Meta:
         description = "Represents app data."
@@ -484,6 +505,7 @@ class App(ModelObjectType[models.App]):
     @staticmethod
     def resolve_events(root: models.App, info: ResolveInfo, **kwargs):
         qs = root.events.all()
+        qs = filter_connection_queryset(qs, kwargs)
         return create_connection_slice(qs, info, kwargs, AppEventCountableConnection)
 
 
