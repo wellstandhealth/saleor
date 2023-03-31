@@ -16,19 +16,19 @@ def _requestor(requestor: Optional[Union[App, User]]) -> Dict:
     return kwargs
 
 
-def event_app_installed(app: App, requestor: Optional[Union[App, User]]):
+def app_event_installed(app: App, *, requestor: Optional[Union[App, User]]):
     return AppEvent.objects.create(
         app=app, type=AppEventType.INSTALLED, **_requestor(requestor)
     )
 
 
-def event_app_activated(app: App, requestor: Optional[Union[App, User]]):
+def app_event_activated(app: App, *, requestor: Optional[Union[App, User]]):
     return AppEvent.objects.create(
         app=app, type=AppEventType.ACTIVATED, **_requestor(requestor)
     )
 
 
-def event_app_deactivated(app: App, requestor: Optional[Union[App, User]]):
+def app_event_deactivated(app: App, *, requestor: Optional[Union[App, User]]):
     return AppEvent.objects.create(
         app=app, type=AppEventType.DEACTIVATED, **_requestor(requestor)
     )
