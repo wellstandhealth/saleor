@@ -1910,7 +1910,6 @@ class TransactionInitialize(TransactionSessionBase):
             action=action,
             app=app,
             manager=manager,
-            discounts=discounts,
         )
         return cls(transaction=transaction, transaction_event=event, data=data)
 
@@ -2055,7 +2054,6 @@ class TransactionProcess(BaseMutation):
         app_identifier = cast(str, app_identifier)
         action = cls.get_action(request_event, source_object.channel)
         manager = get_plugin_manager_promise(info.context).get()
-        discounts = load_discounts(info.context)
         event, data = handle_transaction_process_session(
             transaction_item=transaction_item,
             source_object=source_object,
@@ -2066,7 +2064,6 @@ class TransactionProcess(BaseMutation):
             action=action,
             manager=manager,
             request_event=request_event,
-            discounts=discounts,
         )
 
         transaction_item.refresh_from_db()
