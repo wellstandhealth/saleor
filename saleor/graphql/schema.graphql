@@ -2931,17 +2931,7 @@ type AppEventCountableEdge {
 interface AppEvent {
   id: ID!
   createdAt: DateTime!
-
-  """App event type."""
-  eventType: AppEventTypeEnum
   requestor: AppEventRequestor
-}
-
-"""All app event types."""
-enum AppEventTypeEnum {
-  INSTALLED
-  ACTIVATED
-  DEACTIVATED
 }
 
 union AppEventRequestor = User | App
@@ -9922,6 +9912,13 @@ type PaymentSource @doc(category: "Payments") {
 input AppEventFilterInput {
   type: AppEventTypeEnum
   createdAt: DateTimeRangeInput
+}
+
+"""All app event types."""
+enum AppEventTypeEnum {
+  INSTALLED
+  ACTIVATED
+  DEACTIVATED
 }
 
 input AppEventSortingInput {
@@ -29313,27 +29310,18 @@ type TransactionProcessSession implements Event {
 type AppEventInstalled implements Node & AppEvent {
   id: ID!
   createdAt: DateTime!
-
-  """App event type."""
-  eventType: AppEventTypeEnum
   requestor: AppEventRequestor
 }
 
 type AppEventActivated implements Node & AppEvent {
   id: ID!
   createdAt: DateTime!
-
-  """App event type."""
-  eventType: AppEventTypeEnum
   requestor: AppEventRequestor
 }
 
 type AppEventDeactivated implements Node & AppEvent {
   id: ID!
   createdAt: DateTime!
-
-  """App event type."""
-  eventType: AppEventTypeEnum
   requestor: AppEventRequestor
 }
 

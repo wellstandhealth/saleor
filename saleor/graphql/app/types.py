@@ -41,12 +41,7 @@ from ..utils import format_permissions_for_display, get_user_or_app_from_context
 from ..webhook.enums import WebhookEventTypeAsyncEnum, WebhookEventTypeSyncEnum
 from ..webhook.types import Webhook
 from .dataloaders import AppByIdLoader, AppExtensionByAppIdLoader, app_promise_callback
-from .enums import (
-    AppEventTypeEnum,
-    AppExtensionMountEnum,
-    AppExtensionTargetEnum,
-    AppTypeEnum,
-)
+from .enums import AppExtensionMountEnum, AppExtensionTargetEnum, AppTypeEnum
 from .filters import AppEventFilter
 from .resolvers import (
     resolve_access_token_for_app,
@@ -321,16 +316,11 @@ class AppToken(BaseObjectType):
 class AppEvent(graphene.Interface):
     id = graphene.GlobalID(required=True)
     created_at = graphene.DateTime(required=True)
-    event_type = AppEventTypeEnum(description="App event type.")
     requestor = graphene.Field("saleor.graphql.app.events.AppEventRequestor")
 
     @classmethod
     def resolve_type(cls, instance: models.AppEvent, _info):
         return APP_EVENTS_MAP.get(instance.type)
-
-    @staticmethod
-    def resolve_event_type(root: models.AppEvent, _info: ResolveInfo):
-        return root.type
 
     @staticmethod
     def resolve_requestor(root: models.AppEvent, _info: ResolveInfo):
