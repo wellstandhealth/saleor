@@ -73,7 +73,7 @@ documentation = "https://docs.saleor.io/"
   google-cloud-secret-manager = "^2.16.1"
 
     [tool.poetry.dependencies.django]
-    version = "^3.2.16"
+    version = "^4.2"
     extras = [ "bcrypt" ]
 
     [tool.poetry.dependencies.uvicorn]
