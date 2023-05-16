@@ -424,14 +424,14 @@ crt = ["awscrt (==0.16.9)"]
 
 [[package]]
 name = "braintree"
-version = "4.18.1"
+version = "4.19.0"
 description = "Braintree Python Library"
 category = "main"
 optional = false
 python-versions = "*"
 files = [
-    {file = "braintree-4.18.1-py2.py3-none-any.whl", hash = "sha256:0ef2726521751c7d8ffb2ac77156424157cc6ae34df58fff3ae0cf0e8b8d3bd3"},
-    {file = "braintree-4.18.1.tar.gz", hash = "sha256:41d7b8408b383a9ba419afbf785f1e336a1da56c56822f0e7253f6b6704319a7"},
+    {file = "braintree-4.19.0-py2.py3-none-any.whl", hash = "sha256:f11ee3349f939b83da5524c4ead5192ae7179c6507d4ceb59abc5eac191a91d0"},
+    {file = "braintree-4.19.0.tar.gz", hash = "sha256:10e203c7e87bf801a3165cfd7093af973fa0d8fb34d452703c90ca8a86d977a0"},
 ]
 
 [package.dependencies]
@@ -3104,6 +3104,7 @@ files = [
     {file = "Pillow-9.5.0-cp311-cp311-musllinux_1_1_x86_64.whl", hash = "sha256:c1170d6b195555644f0616fd6ed929dfcf6333b8675fcca044ae5ab110ded296"},
     {file = "Pillow-9.5.0-cp311-cp311-win32.whl", hash = "sha256:54f7102ad31a3de5666827526e248c3530b3a33539dbda27c6843d19d72644ec"},
     {file = "Pillow-9.5.0-cp311-cp311-win_amd64.whl", hash = "sha256:cfa4561277f677ecf651e2b22dc43e8f5368b74a25a8f7d1d4a3a243e573f2d4"},
+    {file = "Pillow-9.5.0-cp311-cp311-win_arm64.whl", hash = "sha256:965e4a05ef364e7b973dd17fc765f42233415974d773e82144c9bbaaaea5d089"},
     {file = "Pillow-9.5.0-cp312-cp312-win32.whl", hash = "sha256:22baf0c3cf0c7f26e82d6e1adf118027afb325e703922c8dfc1d5d0156bb2eeb"},
     {file = "Pillow-9.5.0-cp312-cp312-win_amd64.whl", hash = "sha256:432b975c009cf649420615388561c0ce7cc31ce9b2e374db659ee4f7d57a1f8b"},
     {file = "Pillow-9.5.0-cp37-cp37m-macosx_10_10_x86_64.whl", hash = "sha256:5d4ebf8e1db4441a55c509c4baa7a0587a0210f7cd25fcfe74dbbce7a4bd1906"},
@@ -5216,5 +5217,5 @@ test = ["pytest"]
 
 [metadata]
 lock-version = "2.0"
-  python-versions = "~3.9"
-content-hash = "bc1ff17dc736a1e656c94e81c93bca32667224061b354415aeda2f181bd8d694"
+python-versions = "~3.9"
+content-hash = "f271970217611398edbdb4d4933a49680a091eb2e3f8948db0ffe3d60528276d"
