@@ -4,13 +4,11 @@ import os
 import jwt
 import requests
 
-from saleor.pharmacy.fg_api.config import FG_ISSUER, FG_AUDIENCE, FG_CLIENT_ID, \
+from saleor.pharmacy.fg_auth0_api.config import FG_ISSUER, FG_AUDIENCE, FG_CLIENT_ID, \
     FG_CLIENT_SECRET
 
 
-class BaseService:
-    _token = None
-
+class FGAuth0Service:
     @staticmethod
     def _call_oauth0():
         url = FG_ISSUER + "oauth/token"
@@ -28,10 +26,11 @@ class BaseService:
 
         return token
 
-    def _get_token(self):
+    @staticmethod
+    def get_token():
         token = None
         if os.path.exists(".fg_token") is False:
-            return BaseService._call_oauth0()
+            return FGAuth0Service._call_oauth0()
 
         exp_datetime = None
         with open(".fg_token", "r", encoding="utf-8") as file:
@@ -41,12 +40,6 @@ class BaseService:
             exp_datetime = datetime.datetime.fromtimestamp(decoded_token["exp"])
 
         if datetime.datetime.now() > exp_datetime:
-            return self._call_oauth0()
+            return FGAuth0Service._call_oauth0()
 
         return token
-
-    def __init__(self):
-        self._token = self._get_token()
-
-    class Meta:
-        abstract = True
