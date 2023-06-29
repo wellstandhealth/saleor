@@ -1,0 +1,92 @@
+### Build and install packages
+FROM python:3.9-slim-buster as build-python
+
+RUN apt-get -y update \
+  && apt-get install -y gettext \
+  # Cleanup apt cache
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
+
+# Prep build key...fetched from cloudbuild step
+COPY google-build-key.json /app/google-build-key.json
+
+# Install Python dependencies
+COPY pyproject.toml /app/
+COPY poetry.lock /app/
+
+RUN pip install poetry
+RUN pip install wheel
+RUN pip install keyrings.google-artifactregistry-auth
+
+WORKDIR /app
+
+# Set credentials to a key that is feteched from GCP cloud storage so we can pull from our repos
+ENV GOOGLE_APPLICATION_CREDENTIALS=/app/google-build-key.json
+ENV ENVIRONMENT_NAME=gcp-qa
+
+ENV GOOGLE_PROJECT_NAME=non-production-381217
+
+# tell poetry to not create a venv
+RUN poetry config virtualenvs.create false
+
+# install dependencies
+RUN poetry install --only main --no-interaction --no-ansi --no-root
+
+RUN rm /app/google-build-key.json
+
+### Final image
+FROM python:3.9-slim-buster
+
+RUN groupadd -r saleor && useradd -r -g saleor saleor
+
+RUN apt-get update \
+  && apt-get -y upgrade \
+  && apt-get install -y \
+  libcairo2 \
+  libgdk-pixbuf2.0-0 \
+  liblcms2-2 \
+  libopenjp2-7 \
+  libpango-1.0-0 \
+  libpangocairo-1.0-0 \
+  libssl1.1 \
+  libtiff5 \
+  libwebp6 \
+  libxml2 \
+  libpq5 \
+  shared-mime-info \
+  mime-support \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN echo 'image/webp webp' >> /etc/mime.types
+RUN echo 'image/avif avif' >> /etc/mime.types
+
+RUN mkdir -p /app/media /app/static \
+  && chown -R saleor:saleor /app/
+RUN pip install gunicorn
+RUN pip install pillow-avif-plugin
+RUN pip install Pillow
+RUN pip install celery
+RUN pip install django==4.1
+
+COPY --from=build-python /usr/local/lib/python3.9/site-packages/ /usr/local/lib/python3.9/site-packages/
+COPY --from=build-python /usr/local/bin/ /usr/local/bin/
+COPY . /app
+WORKDIR /app
+
+ARG STATIC_URL
+ENV STATIC_URL ${STATIC_URL:-/static/}
+# ENV DJANGO_SETTINGS_MODULE="saleor.pharmacy_settings"
+# RUN SECRET_KEY=dummy STATIC_URL=${STATIC_URL} python3 manage.py collectstatic --no-input
+
+EXPOSE 8000
+ENV PYTHONUNBUFFERED 1
+ENV GOOGLE_APPLICATION_CREDENTIALS=/app/google-build-key.json
+ENV ENVIRONMENT_NAME=bryan-laptop
+ENV GOOGLE_PROJECT_NAME=non-production-381217
+ARG COMMIT_ID
+ARG PROJECT_VERSION
+ENV PROJECT_VERSION="${PROJECT_VERSION}"
+ENV DJANGO_SETTINGS_MODULE="saleor.pharmacy_settings"
+
+CMD ["gunicorn", "--bind", ":8000", "--workers", "4", "--worker-class", "saleor.asgi.gunicorn_worker.UvicornWorker", "saleor.asgi:application"]
