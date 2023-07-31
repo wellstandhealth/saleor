@@ -1,12 +1,32 @@
+import os
+import importlib
 from django.apps import AppConfig
+from django.db import models
+from dotenv import load_dotenv
+
+load_dotenv()
+_MODELS = os.getenv("SALEOR_NATURAL_KEY_MODELS").split(",")
 
 
-def get_by_natural_key(self, slug):
-    return self.get(slug=slug)
+def _get_by_natural_key(self, key):
+    model = self.model()
+    if hasattr(model, 'slug'):
+        return self.get(slug=key)
+
+    if hasattr(model, 'uuid'):
+        return self.get(uuid=key)
+
+    raise ValueError('Undefined natural key')
 
 
-def natural_key(self):
-    return (self.slug,)
+def _natural_key(self):
+    if hasattr(self, 'slug'):
+        return (self.slug,)
+
+    if hasattr(self, 'uuid'):
+        return (self.uuid,)
+
+    raise ValueError('Undefined natural key')
 
 
 class ToolingConfig(AppConfig):
@@ -14,8 +34,12 @@ class ToolingConfig(AppConfig):
     name = 'tooling'
 
     def ready(self):
-        from saleor.product.models import Product, ProductManager
+        models.Manager.get_by_natural_key = _get_by_natural_key
 
-        ProductManager.get_by_natural_key = get_by_natural_key
-        Product.objects = ProductManager()
-        Product.natural_key = natural_key
+        for model in _MODELS:
+            app, object_name = model.split('.')
+            module = importlib.import_module('saleor.{}.models'.format(app))
+            object_ = getattr(module, object_name)
+            # Skip undefined natural key
+            if hasattr(object_, 'slug') or hasattr(object_, 'uuid'):
+                object_.natural_key = _natural_key
