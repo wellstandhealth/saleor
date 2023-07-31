@@ -1,11 +1,7 @@
-import os
 import importlib
 from django.apps import AppConfig
 from django.db import models
-from dotenv import load_dotenv
-
-load_dotenv()
-_MODELS = os.getenv("SALEOR_NATURAL_KEY_MODELS").split(",")
+from tooling.constants import EXPORT_SALEOR_MODELS
 
 
 def _get_by_natural_key(self, key):
@@ -36,7 +32,7 @@ class ToolingConfig(AppConfig):
     def ready(self):
         models.Manager.get_by_natural_key = _get_by_natural_key
 
-        for model in _MODELS:
+        for model in EXPORT_SALEOR_MODELS:
             app, object_name = model.split('.')
             module = importlib.import_module('saleor.{}.models'.format(app))
             object_ = getattr(module, object_name)

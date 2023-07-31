@@ -1,11 +1,7 @@
-import os
-from dotenv import load_dotenv
 from django.core.management.commands import dumpdata
-
-load_dotenv()
-_MODELS = tuple(os.getenv("SALEOR_NATURAL_KEY_MODELS").split(","))
+from tooling.constants import EXPORT_SALEOR_MODELS
 
 
 class Command(dumpdata.Command):
     def handle(self, *app_labels, **options):
-        return super().handle(*_MODELS, **options)
+        return super().handle(*(app_labels + EXPORT_SALEOR_MODELS), **options)
