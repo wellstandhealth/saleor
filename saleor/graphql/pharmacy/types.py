@@ -26,6 +26,8 @@ class SiteSettingsType(BaseObjectType):
     fill_fee_cold_chain = graphene.Float()
     margin_regular = graphene.Float()
     margin_cold_chain = graphene.Float()
+    ship_fee_regular = graphene.Float()
+    ship_fee_cold_chain = graphene.Float()
 
 
 class SiteSettingsList(BaseObjectType):

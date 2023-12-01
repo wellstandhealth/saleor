@@ -12792,6 +12792,8 @@ type SiteSettingsType implements Node {
   fillFeeColdChain: Float
   marginRegular: Float
   marginColdChain: Float
+  shipFeeRegular: Float
+  shipFeeColdChain: Float
 }
 
 type SiteSettingsList {
@@ -20475,10 +20477,10 @@ input SiteSettingsInput {
   faxNumber: String!
 
   """Site Settings Image"""
-  image: String!
+  image: String
 
   """Site Settings Image Type"""
-  imageType: String!
+  imageType: String
 
   """Site Settings Cookies SRC"""
   cookiesSrc: String
@@ -20500,6 +20502,12 @@ input SiteSettingsInput {
 
   """Site Settings Margin Cold Chain"""
   marginColdChain: Float
+
+  """Site Settings Ship Fee Regular"""
+  shipFeeRegular: Float
+
+  """Site Settings Ship Fee Cold Chain"""
+  shipFeeColdChain: Float
 }
 
 """Update Site Settings by id."""

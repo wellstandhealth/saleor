@@ -34,6 +34,12 @@ class SiteSettingsInput(graphene.InputObjectType):
     margin_cold_chain = graphene.Float(
         description="Site Settings Margin Cold Chain"
     )
+    ship_fee_regular = graphene.Float(
+        description="Site Settings Ship Fee Regular"
+    )
+    ship_fee_cold_chain = graphene.Float(
+        description="Site Settings Ship Fee Cold Chain"
+    )
 
 
 class SiteSettingsCreate(graphene.Mutation):
@@ -67,6 +73,8 @@ class SiteSettingsCreate(graphene.Mutation):
             fill_fee_cold_chain=input.fill_fee_cold_chain,
             margin_regular=input.margin_regular,
             margin_cold_chain=input.margin_cold_chain,
+            ship_fee_regular=input.ship_fee_regular,
+            ship_fee_cold_chain=input.ship_fee_cold_chain,
         )
 
         site_settings.save()
@@ -138,6 +146,8 @@ class SiteSettingsUpdate(graphene.Mutation):
         site_settings.fill_fee_cold_chain = input.fill_fee_cold_chain
         site_settings.margin_regular = input.margin_regular
         site_settings.margin_cold_chain = input.margin_cold_chain
+        site_settings.ship_fee_regular = input.ship_fee_regular
+        site_settings.ship_fee_cold_chain = input.ship_fee_cold_chain
 
         site_settings.save()
 
