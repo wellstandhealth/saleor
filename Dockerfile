@@ -1,33 +1,37 @@
 ### Build and install packages
 FROM python:3.9 as build-python
 
-RUN apt-get -y update \
-  && apt-get install -y gettext \
+RUN apt-get -y update --no-install-recommends \
+  && apt-get install -y gettext --no-install-recommends \
   # Cleanup apt cache
-  && apt-get clean \
+  && apt-get clean --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY requirements_dev.txt /app/
+COPY poetry-docker.toml /app/poetry.toml
+COPY pyproject.toml /app/
+COPY poetry.lock /app/
+RUN pip install "poetry>=1.3.0,<1.4.0"
 WORKDIR /app
-RUN pip install -r requirements_dev.txt
+RUN poetry install
 
 ### Final image
 FROM python:3.9-slim
 
 RUN groupadd -r saleor && useradd -r -g saleor saleor
 
-RUN apt-get update \
-  && apt-get install -y \
+RUN apt-get update --no-install-recommends \
+  && apt-get -y upgrade --no-install-recommends \
+  && apt-get install -y --no-install-recommends \
   libcairo2 \
   libgdk-pixbuf2.0-0 \
   liblcms2-2 \
   libopenjp2-7 \
   libpango-1.0-0 \
   libpangocairo-1.0-0 \
-  libssl1.1 \
-  libtiff5 \
-  libwebp6 \
+  libssl3 \
+  libtiff6 \
+  libwebp7 \
   libxml2 \
   libpq5 \
   shared-mime-info \
@@ -57,7 +61,7 @@ ARG COMMIT_ID
 ARG PROJECT_VERSION
 ENV PROJECT_VERSION="${PROJECT_VERSION}"
 
-LABEL org.opencontainers.image.title="mirumee/saleor"                                  \
+LABEL org.opencontainers.image.title="saleor/saleor"                                  \
       org.opencontainers.image.description="\
 A modular, high performance, headless e-commerce platform built with Python, \
 GraphQL, Django, and ReactJS."                                                         \

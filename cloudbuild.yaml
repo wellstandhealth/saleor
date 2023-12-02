@@ -1,0 +1,11 @@
+steps:
+  - name: google/cloud-sdk:slim
+    script: |
+      #!/usr/bin/env bash
+      ./fetch_key.sh
+
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-t', 'us-docker.pkg.dev/non-production-381217/wellstand-docker/saleor:$COMMIT_SHA', '-f', 'Dockerfile_pharmacy', '.' ]
+
+images:
+    - 'us-docker.pkg.dev/non-production-381217/wellstand-docker/saleor:$COMMIT_SHA'

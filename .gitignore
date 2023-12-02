@@ -4,7 +4,6 @@
 !.dockerignore
 !.github
 !.gitignore
-!.nvmrc
 !.pylintrc
 !.vscode
 *.log
@@ -20,7 +19,7 @@ dist/
 /media/
 /node_modules/
 /static/
-
+/digital_contents/
 # Environments
 .env
 .venv
@@ -32,3 +31,6 @@ venv.bak/
 
 # Exported results file
 django-queries-results.html
+/saleor/media/products/
+
+/saleor/media/thumbnails/
