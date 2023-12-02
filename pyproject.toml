@@ -96,7 +96,7 @@ extras = [ "bcrypt" ]
 
 [tool.poetry.dependencies.uvicorn]
 extras = [ "standard" ]
-version = "^0.23.1"
+version = "^0.24.0"
 
 
 [tool.poetry.dependencies.celery]
