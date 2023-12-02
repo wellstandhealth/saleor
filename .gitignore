@@ -4,7 +4,6 @@
 !.dockerignore
 !.github
 !.gitignore
-!.pylintrc
 !.vscode
 *.log
 *.pot
@@ -34,3 +33,4 @@ django-queries-results.html
 /saleor/media/products/
 
 /saleor/media/thumbnails/
+google-build-key.json
