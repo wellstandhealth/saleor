@@ -41,3 +41,15 @@ class SiteSettings(models.Model):
         blank=True,
         null=True,
     )
+    ship_fee_regular = models.DecimalField(
+        max_digits=settings.DEFAULT_MAX_DIGITS,
+        decimal_places=settings.DEFAULT_DECIMAL_PLACES,
+        blank=True,
+        null=True,
+    )
+    ship_fee_cold_chain = models.DecimalField(
+        max_digits=settings.DEFAULT_MAX_DIGITS,
+        decimal_places=settings.DEFAULT_DECIMAL_PLACES,
+        blank=True,
+        null=True,
+    )
