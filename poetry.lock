@@ -1120,13 +1120,13 @@ django = "*"
 
 [[package]]
 name = "django-cache-url"
-version = "3.4.4"
+version = "3.4.5"
 description = "Use Cache URLs in your Django application."
 optional = false
 python-versions = "*"
 files = [
-    {file = "django-cache-url-3.4.4.tar.gz", hash = "sha256:ef2cfacea361ee22e9b67d6ca941db22e0a9eaf892b67ca71cad52c62a17fd36"},
-    {file = "django_cache_url-3.4.4-py2.py3-none-any.whl", hash = "sha256:5ca4760b4580b80e41279bc60d1e5c16a822e4e462265faab0a330701bb0ef9a"},
+    {file = "django-cache-url-3.4.5.tar.gz", hash = "sha256:eb9fb194717524348c95cad9905b70b647452741c1d9e481fac6d2125f0ad917"},
+    {file = "django_cache_url-3.4.5-py2.py3-none-any.whl", hash = "sha256:5f350759978483ab85dc0e3e17b3d53eed3394a28148f6bf0f53d11d0feb5b3c"},
 ]
 
 [[package]]
@@ -5352,4 +5352,4 @@ test = ["pytest"]
 [metadata]
 lock-version = "2.0"
 python-versions = "~3.9"
-content-hash = "b69593ff211c84bf05f64d7f41ee7948980646f1cc6651f60fec8ba571614a4c"
+content-hash = "37ecba20e1907e6fb8f6e70a3183564c597543c2fe63e951ca2f1c9c2008e78e"
