@@ -358,11 +358,12 @@ class OpenIDConnectPlugin(BasePlugin):
         if self.config.audience:
             kwargs["audience"] = self.config.audience
 
+        # there should probably be a flag to enable PKCE, but for now this will do
         random_bytes = secrets.token_bytes(64)
         code_verifier = "".join(chr(byte % 128) for byte in random_bytes)
 
         uri, state = self.oauth.create_authorization_url(
-            self.config.authorization_url, code_verifier, **kwargs
+            url=self.config.authorization_url, code_verifier=code_verifier, **kwargs
         )
         return {"authorizationUrl": uri}
 
