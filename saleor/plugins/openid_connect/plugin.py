@@ -1,4 +1,5 @@
 import logging
+import secrets
 from typing import Optional
 
 from authlib.common.errors import AuthlibBaseError
@@ -230,6 +231,7 @@ class OpenIDConnectPlugin(BasePlugin):
             client_id=self.config.client_id,
             client_secret=self.config.client_secret,
             scope=scope,
+            code_challenge_method="S256",
         )
 
     def _use_scope_permissions(self, user, scope):
@@ -355,8 +357,12 @@ class OpenIDConnectPlugin(BasePlugin):
         }
         if self.config.audience:
             kwargs["audience"] = self.config.audience
+
+        code_verifier_bytes = secrets.token_bytes(64)
+        code_verifier = code_verifier_bytes.decode("ascii")
+
         uri, state = self.oauth.create_authorization_url(
-            self.config.authorization_url, **kwargs
+            self.config.authorization_url, code_verifier, **kwargs
         )
         return {"authorizationUrl": uri}
 
