@@ -87,7 +87,7 @@ urllib3 = "^1.26.18"
 weasyprint = ">=53.0"
 
 google-cloud-secret-manager = "^2.16.1"
-django-allow-cidr = "0.6.0"
+django-allow-cidr = "0.7.1"
 
 
 [tool.poetry.dependencies.django]
