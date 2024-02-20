@@ -1,6 +1,9 @@
 import logging
 import secrets
+import os
 from typing import Optional
+from redis import Redis
+
 
 from authlib.common.errors import AuthlibBaseError
 from django.core import signing
@@ -287,8 +290,15 @@ class OpenIDConnectPlugin(BasePlugin):
             )
 
         try:
+            cache_url = os.environ.get("CACHE_URL")
+            rs = Redis.from_url(cache_url)
+            code_verifier = rs.get(f"state:{state}:code-verifier")
+
             token_data = self.oauth.fetch_token(
-                self.config.token_url, code=code, redirect_uri=redirect_uri
+                self.config.token_url,
+                code=code,
+                redirect_uri=redirect_uri,
+                code_verifier=code_verifier,
             )
         except AuthlibBaseError as error:
             logger.error(f"Unable to fetch token from {self.config.token_url}.")
@@ -372,6 +382,12 @@ class OpenIDConnectPlugin(BasePlugin):
         uri, state = self.oauth.create_authorization_url(
             url=self.config.authorization_url, code_verifier=code_verifier, **kwargs
         )
+        # we need to temporarily store the code verifier for the current state
+
+        cache_url = os.environ.get("CACHE_URL")
+        rs = Redis.from_url(cache_url)
+        rs.set(f"state:{state}:code-verifier", code_verifier, ex=60 * 5)
+
         return {"authorizationUrl": uri}
 
     def external_refresh(
