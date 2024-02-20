@@ -245,6 +245,7 @@ class OpenIDConnectPlugin(BasePlugin):
     def external_obtain_access_tokens(
         self, data: dict, request: WSGIRequest, previous_value
     ) -> ExternalAccessTokens:
+        logger.info("external_obtain_access_tokens")
         if not self.active:
             return previous_value
 
@@ -252,6 +253,7 @@ class OpenIDConnectPlugin(BasePlugin):
             return previous_value
 
         code = data.get("code")
+        logger.info(f"code: {code}")
         if not code:
             msg = "Missing required field - code"
             raise ValidationError(
@@ -259,6 +261,7 @@ class OpenIDConnectPlugin(BasePlugin):
             )
 
         state = data.get("state")
+        logger.info(f"state: {state}")
         if not state:
             msg = "Missing required field - state"
             raise ValidationError(
@@ -269,13 +272,16 @@ class OpenIDConnectPlugin(BasePlugin):
             state_data = signing.loads(state)
         except signing.BadSignature:
             msg = "Bad signature"
+            logger.error("Bad Signature in state.")
             raise ValidationError(
                 {"state": ValidationError(msg, code=PluginErrorCode.INVALID.value)}
             )
 
         redirect_uri = state_data.get("redirectUri")
+        logger.info(f"redirect_uri: {redirect_uri}")
         if not redirect_uri:
             msg = "The state value is incorrect"
+            logger.error("The state value is incorrect.")
             raise ValidationError(
                 {"code": ValidationError(msg, code=PluginErrorCode.INVALID.value)}
             )
@@ -285,6 +291,7 @@ class OpenIDConnectPlugin(BasePlugin):
                 self.config.token_url, code=code, redirect_uri=redirect_uri
             )
         except AuthlibBaseError as error:
+            logger.error(f"Unable to fetch token from {self.config.token_url}.")
             raise ValidationError(
                 {
                     "code": ValidationError(
