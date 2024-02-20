@@ -376,8 +376,9 @@ class OpenIDConnectPlugin(BasePlugin):
             kwargs["audience"] = self.config.audience
 
         # there should probably be a flag to enable PKCE, but for now this will do
+        charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~"
         random_bytes = secrets.token_bytes(64)
-        code_verifier = "".join(chr(byte % 128) for byte in random_bytes)
+        code_verifier = "".join(charset[b % len(charset)] for b in random_bytes)
         logger.info(f"code_verifier: {code_verifier}")
 
         uri, state = self.oauth.create_authorization_url(
