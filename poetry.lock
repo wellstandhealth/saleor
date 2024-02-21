@@ -1285,13 +1285,13 @@ measurement = ">=1.6,<4.0"
 
 [[package]]
 name = "django-mptt"
-version = "0.15.0"
+version = "0.16.0"
 description = "Utilities for implementing Modified Preorder Tree Traversal with your Django Models and working with trees of Model instances."
 optional = false
 python-versions = ">=3.9"
 files = [
-    {file = "django_mptt-0.15.0-py3-none-any.whl", hash = "sha256:2574c014b102a41c642be5921f59356b8437fc83c9866d97644c6a0c5dc8ccc1"},
-    {file = "django_mptt-0.15.0.tar.gz", hash = "sha256:0df19d5a55f34e73df58ee03fbe0d91807493de4bd3a09f6eb00fc62920035d9"},
+    {file = "django_mptt-0.16.0-py3-none-any.whl", hash = "sha256:8716849ba3318d94e2e100ed0923a05c1ffdf8195f8472b690dbaf737d2af3b5"},
+    {file = "django_mptt-0.16.0.tar.gz", hash = "sha256:56c9606bf0b329b5f5afd55dd8bfd073612ea1d5999b10903b09de62bee84c8e"},
 ]
 
 [package.dependencies]
