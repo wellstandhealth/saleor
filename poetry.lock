@@ -1302,13 +1302,13 @@ tests = ["coverage[toml]", "mock-django"]
 
 [[package]]
 name = "django-phonenumber-field"
-version = "7.2.0"
+version = "7.3.0"
 description = "An international phone number field for django models."
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "django-phonenumber-field-7.2.0.tar.gz", hash = "sha256:20c7c5c449e33eed5fd45ef8d3dc668faabaeff3277eddd1892b262d686ba381"},
-    {file = "django_phonenumber_field-7.2.0-py3-none-any.whl", hash = "sha256:16778f2717ea2aecc6178beb0d6bc431c78c6a8b0474e1fa8face040efeb6e9e"},
+    {file = "django-phonenumber-field-7.3.0.tar.gz", hash = "sha256:f9cdb3de085f99c249328293a3b93d4e5fa440c0c8e3b99eb0d0f54748629797"},
+    {file = "django_phonenumber_field-7.3.0-py3-none-any.whl", hash = "sha256:bc6eaa49d1f9d870944f5280258db511e3a1ba5e2fbbed255488dceacae45d06"},
 ]
 
 [package.dependencies]
