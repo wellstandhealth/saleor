@@ -86,7 +86,7 @@ text-unidecode = "^1.2"
 urllib3 = "^1.26.18"
 weasyprint = ">=53.0"
 
-google-cloud-secret-manager = "^2.16.1"
+google-cloud-secret-manager = "^2.16.4"
 django-allow-cidr = "0.7.1"
 
 
