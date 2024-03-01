@@ -1743,7 +1743,6 @@ files = [
 
 [package.dependencies]
 google-api-core = {version = ">=1.34.0,<2.0.dev0 || >=2.11.dev0,<3.0.0dev", extras = ["grpc"]}
-google-auth = ">=2.14.1,<3.0.0dev"
 grpc-google-iam-v1 = ">=0.12.4,<1.0.0dev"
 grpcio = ">=1.51.3,<2.0dev"
 grpcio-status = ">=1.33.2"
@@ -4702,13 +4701,13 @@ types-urllib3 = "*"
 
 [[package]]
 name = "types-six"
-version = "1.16.21.9"
+version = "1.16.21.20240301"
 description = "Typing stubs for six"
 optional = false
-python-versions = "*"
+python-versions = ">=3.8"
 files = [
-    {file = "types-six-1.16.21.9.tar.gz", hash = "sha256:746e6c25b8c48b3c8ab9efe7f68022839111de423d35ba4b206b88b12d75f233"},
-    {file = "types_six-1.16.21.9-py3-none-any.whl", hash = "sha256:1591a09430a3035326da5fdb71692d0b3cc36b25a440cc5929ca6241f3984705"},
+    {file = "types-six-1.16.21.20240301.tar.gz", hash = "sha256:c877c0fa3dbe696860e571bfc23f987ce084bf4de13dfed343ef61ed49826686"},
+    {file = "types_six-1.16.21.20240301-py3-none-any.whl", hash = "sha256:4d5bbf07e521f0cb52cc880de71047bc9b5c2a5059211811e15423872d403c4c"},
 ]
 
 [[package]]
@@ -5382,4 +5381,4 @@ test = ["pytest"]
 [metadata]
 lock-version = "2.0"
 python-versions = "~3.9"
-content-hash = "1c64ea1fff819c64bbf46c15fb0387c423966b37920212973e4579f66dcdc642"
+content-hash = "d1fd1e6e896b18b41e1142784ed277820fa8cd06bc9154489bfec6ef074969d2"
