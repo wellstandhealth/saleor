@@ -4,8 +4,8 @@ from django.db import models
 
 class SiteSettings(models.Model):
     class Meta:
-        app_label = 'pharmacy'
-        ordering = ['name']
+        app_label = "pharmacy"
+        ordering = ["name"]
 
     name = models.CharField(max_length=25)
     slug = models.SlugField(max_length=255, unique=True)
@@ -13,9 +13,13 @@ class SiteSettings(models.Model):
     npi = models.CharField(max_length=255)
     phone_number = models.CharField(max_length=25)
     fax_number = models.CharField(max_length=25)
-    image = models.FileField(upload_to='site/images', max_length=255)
-    css = models.FileField(upload_to='site/css')
+    image = models.FileField(upload_to="site/images", max_length=255)
+    css = models.FileField(upload_to="site/css")
     cookies_src = models.CharField(max_length=255)
+    is_default = models.BooleanField(default=False)
+    domain_name = models.CharField(max_length=255, unique=True)
+
+    # to be deleted after migration
     is_active = models.BooleanField(default=False)
     fill_fee_regular = models.DecimalField(
         max_digits=settings.DEFAULT_MAX_DIGITS,
