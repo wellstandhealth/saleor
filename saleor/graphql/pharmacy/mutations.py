@@ -21,25 +21,8 @@ class SiteSettingsInput(graphene.InputObjectType):
     image_type = graphene.String(description="Site Settings Image Type")
     cookies_src = graphene.String(description="Site Settings Cookies SRC")
     css = graphene.String(description="Site Settings CSS")
-    is_active = graphene.Boolean(description="Active Site Settings")
-    fill_fee_regular = graphene.Float(
-        description="Site Settings Fill Fee Regular"
-    )
-    fill_fee_cold_chain = graphene.Float(
-        description="Site Settings Fill Fee Cold Chain"
-    )
-    margin_regular = graphene.Float(
-        description="Site Settings Margin Regular"
-    )
-    margin_cold_chain = graphene.Float(
-        description="Site Settings Margin Cold Chain"
-    )
-    ship_fee_regular = graphene.Float(
-        description="Site Settings Ship Fee Regular"
-    )
-    ship_fee_cold_chain = graphene.Float(
-        description="Site Settings Ship Fee Cold Chain"
-    )
+    is_default = graphene.Boolean(description="Default Site Settings")
+    domain_name = graphene.String(description="Site Settings Domain")
 
 
 class SiteSettingsCreate(graphene.Mutation):
@@ -56,7 +39,7 @@ class SiteSettingsCreate(graphene.Mutation):
 
     @staticmethod
     def mutate(self, info, input: SiteSettingsInput):
-        if input.is_active:
+        if input.is_default:
             update_data = {
                 'is_active': False}
             models.SiteSettings.objects.update(**update_data)
@@ -68,13 +51,8 @@ class SiteSettingsCreate(graphene.Mutation):
             phone_number=input.phone_number,
             fax_number=input.fax_number,
             cookies_src=input.cookies_src,
-            is_active=input.is_active,
-            fill_fee_regular=input.fill_fee_regular,
-            fill_fee_cold_chain=input.fill_fee_cold_chain,
-            margin_regular=input.margin_regular,
-            margin_cold_chain=input.margin_cold_chain,
-            ship_fee_regular=input.ship_fee_regular,
-            ship_fee_cold_chain=input.ship_fee_cold_chain,
+            is_default=input.is_default,
+            domain_name=input.domain_name,
         )
 
         site_settings.save()
@@ -126,9 +104,9 @@ class SiteSettingsUpdate(graphene.Mutation):
 
     @staticmethod
     def mutate(self, info, id, input: SiteSettingsInput):
-        if input.is_active:
+        if input.is_default:
             update_data = {
-                'is_active': False}
+                'is_default': False}
             models.SiteSettings.objects.update(**update_data)
         site_settings = models.SiteSettings.objects.get(pk=id)
 
@@ -141,13 +119,8 @@ class SiteSettingsUpdate(graphene.Mutation):
         site_settings.phone_number = input.phone_number
         site_settings.fax_number = input.fax_number
         site_settings.cookies_src = input.cookies_src
-        site_settings.is_active = input.is_active
-        site_settings.fill_fee_regular = input.fill_fee_regular
-        site_settings.fill_fee_cold_chain = input.fill_fee_cold_chain
-        site_settings.margin_regular = input.margin_regular
-        site_settings.margin_cold_chain = input.margin_cold_chain
-        site_settings.ship_fee_regular = input.ship_fee_regular
-        site_settings.ship_fee_cold_chain = input.ship_fee_cold_chain
+        site_settings.is_default = input.is_default
+        site_settings.domain_name = input.domain_name
 
         site_settings.save()
 

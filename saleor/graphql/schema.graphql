@@ -13224,13 +13224,8 @@ type SiteSettingsType implements Node {
   image: String!
   cookiesSrc: String!
   css: String
-  isActive: Boolean
-  fillFeeRegular: Float
-  fillFeeColdChain: Float
-  marginRegular: Float
-  marginColdChain: Float
-  shipFeeRegular: Float
-  shipFeeColdChain: Float
+  isDefault: Boolean
+  domainName: String!
 }
 
 type SiteSettingsList {
@@ -21591,26 +21586,11 @@ input SiteSettingsInput {
   """Site Settings CSS"""
   css: String
 
-  """Active Site Settings"""
-  isActive: Boolean
+  """Default Site Settings"""
+  isDefault: Boolean
 
-  """Site Settings Fill Fee Regular"""
-  fillFeeRegular: Float
-
-  """Site Settings Fill Fee Cold Chain"""
-  fillFeeColdChain: Float
-
-  """Site Settings Margin Regular"""
-  marginRegular: Float
-
-  """Site Settings Margin Cold Chain"""
-  marginColdChain: Float
-
-  """Site Settings Ship Fee Regular"""
-  shipFeeRegular: Float
-
-  """Site Settings Ship Fee Cold Chain"""
-  shipFeeColdChain: Float
+  """Site Settings Domain"""
+  domainName: String
 }
 
 """Update Site Settings by id."""

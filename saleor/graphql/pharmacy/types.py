@@ -1,7 +1,7 @@
 import graphene
 from graphene import relay
 
-from ..core.types import BaseObjectType, Money
+from ..core.types import BaseObjectType
 from ...pharmacy import models
 
 
@@ -21,13 +21,8 @@ class SiteSettingsType(BaseObjectType):
     image = graphene.String(required=True)
     cookies_src = graphene.String(required=True)
     css = graphene.String()
-    is_active = graphene.Boolean()
-    fill_fee_regular = graphene.Float()
-    fill_fee_cold_chain = graphene.Float()
-    margin_regular = graphene.Float()
-    margin_cold_chain = graphene.Float()
-    ship_fee_regular = graphene.Float()
-    ship_fee_cold_chain = graphene.Float()
+    is_default = graphene.Boolean()
+    domain_name = graphene.String(required=True)
 
 
 class SiteSettingsList(BaseObjectType):
