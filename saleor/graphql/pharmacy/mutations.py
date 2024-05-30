@@ -57,7 +57,10 @@ class SiteSettingsCreate(graphene.Mutation):
 
         site_settings.save()
 
-        slug = str(input.name).lower().replace(" ", "-")
+        if not input.slug:
+            slug = str(input.name).lower().replace(" ", "-")
+        else:
+            slug = str(input.slug).lower().replace(" ", "-")
         existing_site_settings = models.SiteSettings.objects.filter(slug=slug).first()
         if existing_site_settings:
             slug = f"{slug}-{str(site_settings.pk)}"
@@ -124,7 +127,10 @@ class SiteSettingsUpdate(graphene.Mutation):
 
         site_settings.save()
 
-        slug = str(input.slug).lower().replace(" ", "-")
+        if not input.slug:
+            slug = str(input.name).lower().replace(" ", "-")
+        else:
+            slug = str(input.slug).lower().replace(" ", "-")
         existing_site_settings = models.SiteSettings.objects.filter(slug=slug).first()
         if site_settings.slug != input.slug and existing_site_settings:
             slug = f"{slug}-{str(site_settings.pk)}"
