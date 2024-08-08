@@ -1,5 +1,7 @@
 from django.db import models
 
+from saleor.channel.models import Channel
+
 
 class SiteSettings(models.Model):
     class Meta:
@@ -17,3 +19,4 @@ class SiteSettings(models.Model):
     cookies_src = models.CharField(max_length=255)
     is_default = models.BooleanField(default=False)
     domain_name = models.CharField(max_length=255, unique=True)
+    channels = models.ManyToManyField(Channel)

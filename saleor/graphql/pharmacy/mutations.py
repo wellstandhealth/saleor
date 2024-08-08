@@ -8,6 +8,10 @@ from ...permission.enums import SitePermissions
 from ...pharmacy import models
 
 
+# class ChannelInput(graphene.InputObjectType):
+#     id = graphene.GlobalID(required=True, description="The ID of the channel.")
+
+
 class SiteSettingsInput(graphene.InputObjectType):
     name = graphene.String(description="Site Settings Name", required=True)
     slug = graphene.String(description="Site Settings Slug")
@@ -23,6 +27,7 @@ class SiteSettingsInput(graphene.InputObjectType):
     css = graphene.String(description="Site Settings CSS")
     is_default = graphene.Boolean(description="Default Site Settings")
     domain_name = graphene.String(description="Site Settings Domain")
+    channels = graphene.List(graphene.Int, description="List of all channels.")
 
 
 class SiteSettingsCreate(graphene.Mutation):
@@ -56,6 +61,10 @@ class SiteSettingsCreate(graphene.Mutation):
         )
 
         site_settings.save()
+
+        channels = models.Channel.objects.filter(id__in=input.channels or [])
+        for channel in channels:
+            site_settings.channels.add(channel)
 
         if not input.slug:
             slug = str(input.name).lower().replace(" ", "-")
@@ -124,6 +133,10 @@ class SiteSettingsUpdate(graphene.Mutation):
         site_settings.cookies_src = input.cookies_src
         site_settings.is_default = input.is_default
         site_settings.domain_name = input.domain_name
+
+        channels = models.Channel.objects.filter(id__in=input.channels or [])
+        for channel in channels:
+            site_settings.channels.add(channel)
 
         site_settings.save()
 

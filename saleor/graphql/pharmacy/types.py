@@ -1,6 +1,7 @@
 import graphene
 from graphene import relay
 
+from ..channel.types import Channel
 from ..core.types import BaseObjectType
 from ...pharmacy import models
 
@@ -23,6 +24,11 @@ class SiteSettingsType(BaseObjectType):
     css = graphene.String()
     is_default = graphene.Boolean()
     domain_name = graphene.String(required=True)
+    channels = graphene.List(Channel)
+
+    @staticmethod
+    def resolve_channels(root: models.SiteSettings, info):
+        return root.channels.all()
 
 
 class SiteSettingsList(BaseObjectType):
