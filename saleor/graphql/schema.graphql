@@ -21593,8 +21593,8 @@ input SiteSettingsInput {
   """Site Settings Domain"""
   domainName: String
 
-  """List of all channels."""
-  channels: [Int]
+  """Slug list of all channels."""
+  channels: [String]
 }
 
 """Update Site Settings by id."""

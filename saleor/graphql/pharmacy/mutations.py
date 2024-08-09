@@ -23,7 +23,7 @@ class SiteSettingsInput(graphene.InputObjectType):
     css = graphene.String(description="Site Settings CSS")
     is_default = graphene.Boolean(description="Default Site Settings")
     domain_name = graphene.String(description="Site Settings Domain")
-    channels = graphene.List(graphene.Int, description="List of all channels.")
+    channels = graphene.List(graphene.String, description="Slug list of all channels.")
 
 
 class SiteSettingsCreate(graphene.Mutation):
@@ -58,7 +58,7 @@ class SiteSettingsCreate(graphene.Mutation):
 
         site_settings.save()
 
-        channels = models.Channel.objects.filter(id__in=input.channels or [])
+        channels = models.Channel.objects.filter(slug__in=input.channels or [])
         site_settings.channels.add(*channels)
 
         if not input.slug:
@@ -129,7 +129,8 @@ class SiteSettingsUpdate(graphene.Mutation):
         site_settings.is_default = input.is_default
         site_settings.domain_name = input.domain_name
 
-        channels = models.Channel.objects.filter(id__in=input.channels or [])
+        channels = models.Channel.objects.filter(slug__in=input.channels or [])
+        site_settings.channels.clear()
         site_settings.channels.add(*channels)
 
         site_settings.save()
