@@ -13226,6 +13226,7 @@ type SiteSettingsType implements Node {
   css: String
   isDefault: Boolean
   domainName: String!
+  channels: [Channel]
 }
 
 type SiteSettingsList {
@@ -21591,6 +21592,9 @@ input SiteSettingsInput {
 
   """Site Settings Domain"""
   domainName: String
+
+  """Slug list of all channels."""
+  channels: [String]
 }
 
 """Update Site Settings by id."""
