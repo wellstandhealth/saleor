@@ -13,6 +13,7 @@ framework.
 """
 
 import os
+import io
 
 from django.core.wsgi import get_wsgi_application
 from django.utils.functional import SimpleLazyObject
@@ -32,15 +33,15 @@ application = get_wsgi_application()
 application = health_check(application, "/health/")
 
 # Warm-up the django application instead of letting it lazy-load
-application(
-    {
-        "REQUEST_METHOD": "GET",
-        "SERVER_NAME": SimpleLazyObject(get_allowed_host_lazy),
-        "REMOTE_ADDR": "127.0.0.1",
-        "SERVER_PORT": 80,
-        "PATH_INFO": "/graphql/",
-        "wsgi.input": b"",
-        "wsgi.multiprocess": True,
-    },
-    lambda x, y: None,
-)
+# application(
+#     {
+#         "REQUEST_METHOD": "GET",
+#         "SERVER_NAME": SimpleLazyObject(get_allowed_host_lazy),
+#         "REMOTE_ADDR": "127.0.0.1",
+#         "SERVER_PORT": 8000,
+#         "PATH_INFO": "/graphql/",
+#         "wsgi.input": io.BytesIO("".encode("utf-8")),
+#         "wsgi.multiprocess": True,
+#     },
+#     lambda x, y: None,
+# )
