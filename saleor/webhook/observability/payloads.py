@@ -67,8 +67,14 @@ def pretty_json(obj: Any) -> str:
     return json.dumps(obj, indent=2, ensure_ascii=True)
 
 
-def dump_payload(payload: Any) -> str:
-    return json.dumps(to_camel_case(payload), ensure_ascii=True, cls=CustomJsonEncoder)
+def dump_payload(payload: Any) -> bytes:
+    return json.dumps(
+        to_camel_case(payload), ensure_ascii=True, cls=CustomJsonEncoder
+    ).encode("utf-8")
+
+
+def concatenate_json_events(events: list[bytes]) -> bytes:
+    return b"[" + b", ".join(events) + b"]"
 
 
 TRUNC_PLACEHOLDER = JsonTruncText(truncated=False)
@@ -150,7 +156,7 @@ def generate_api_call_payload(
     response: HttpResponse,
     gql_operations: list["GraphQLOperationResponse"],
     bytes_limit: int,
-) -> ApiCallPayload:
+) -> bytes:
     payload = ApiCallPayload(
         event_type=ObservabilityEventTypes.API_CALL,
         request=ApiCallRequest(
@@ -182,7 +188,7 @@ def generate_api_call_payload(
     payload["gql_operations"] = serialize_gql_operation_results(
         gql_operations, remaining_bytes
     )
-    return payload
+    return dump_payload(payload)
 
 
 @traced_payload_generator
@@ -190,7 +196,7 @@ def generate_event_delivery_attempt_payload(
     attempt: "EventDeliveryAttempt",
     next_retry: Optional["datetime"],
     bytes_limit: int,
-) -> EventDeliveryAttemptPayload:
+) -> bytes:
     if not attempt.delivery:
         raise ValueError(
             f"EventDeliveryAttempt {attempt.id} is not assigned to delivery. "
@@ -201,6 +207,7 @@ def generate_event_delivery_attempt_payload(
             f"EventDelivery {attempt.delivery.id} do not have "
             "payload set. Can't generate payload."
         )
+    payload_data = attempt.delivery.payload.get_payload()
     response_body = attempt.response or ""
     payload = EventDeliveryAttemptPayload(
         id=graphene.Node.to_global_id("EventDeliveryAttempt", attempt.pk),
@@ -224,7 +231,7 @@ def generate_event_delivery_attempt_payload(
             event_type=attempt.delivery.event_type,
             event_sync=attempt.delivery.event_type in WebhookEventSyncType.ALL,
             payload=EventDeliveryPayload(
-                content_length=len(attempt.delivery.payload.payload.encode("utf-8")),
+                content_length=len(payload_data.encode("utf-8")),
                 body=TRUNC_PLACEHOLDER,
             ),
         ),
@@ -256,7 +263,7 @@ def generate_event_delivery_attempt_payload(
     payload["response"]["body"] = JsonTruncText.truncate(response_body, remaining // 2)
     remaining -= payload["response"]["body"].byte_size
 
-    event_delivery_payload = json.loads(attempt.delivery.payload.payload)
+    event_delivery_payload = json.loads(payload_data)
     event_delivery_payload = anonymize_event_payload(
         subscription_query,
         attempt.delivery.event_type,
@@ -266,4 +273,4 @@ def generate_event_delivery_attempt_payload(
     payload["event_delivery"]["payload"]["body"] = JsonTruncText.truncate(
         pretty_json(event_delivery_payload), remaining
     )
-    return payload
+    return dump_payload(payload)

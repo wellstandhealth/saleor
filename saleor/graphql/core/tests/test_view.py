@@ -1,3 +1,4 @@
+import json
 from unittest import mock
 
 import graphene
@@ -6,11 +7,11 @@ from django.test import override_settings
 from graphql.execution.base import ExecutionResult
 
 from .... import __version__ as saleor_version
-from ....demo.views import EXAMPLE_QUERY
+from ....graphql.api import backend, schema
 from ....graphql.utils import INTERNAL_ERROR_MESSAGE
 from ...tests.fixtures import API_PATH
 from ...tests.utils import get_graphql_content, get_graphql_content_from_response
-from ...views import generate_cache_key
+from ...views import GraphQLView, generate_cache_key
 
 
 def test_batch_queries(category, product, api_client, channel_USD):
@@ -142,7 +143,7 @@ def test_graphql_execution_exception(monkeypatch, api_client):
     def mocked_execute(*args, **kwargs):
         raise OSError("Spanish inquisition")
 
-    monkeypatch.setattr("graphql.backend.core.execute_and_validate", mocked_execute)
+    monkeypatch.setattr("saleor.graphql.api.execute", mocked_execute)
     response = api_client.post_graphql("{ shop { name }}")
     assert response.status_code == 400
     content = get_graphql_content_from_response(response)
@@ -243,12 +244,6 @@ def test_unexpected_exceptions_are_logged_in_their_own_logger(
     ]
 
 
-def test_example_query(api_client, product):
-    response = api_client.post_graphql(EXAMPLE_QUERY)
-    content = get_graphql_content(response)
-    assert content["data"]["products"]["edges"][0]["node"]["name"] == product.name
-
-
 @pytest.mark.parametrize(
     "other_query",
     ["me{email}", 'products(first:5,channel:"channel"){edges{node{name}}}'],
@@ -332,3 +327,26 @@ def test_introspection_query_is_not_cached_in_debug_mode(
 def test_generate_cache_key_use_saleor_version():
     cache_key = generate_cache_key(INTROSPECTION_QUERY)
     assert saleor_version in cache_key
+
+
+def test_graphql_view_clears_context(rf, staff_user, product, channel_USD):
+    # given
+    product_id = graphene.Node.to_global_id("Product", product.pk)
+    channel_slug = channel_USD.slug
+    data = {
+        "query": f'{{ product(id: "{product_id}" channel: "{channel_slug}") {{ name category {{ name }} }} }}'
+    }
+    request = rf.post(path="/", data=data, content_type="application/json")
+    request.app = None
+    request.user = staff_user
+
+    # when
+    view = GraphQLView.as_view(backend=backend, schema=schema)
+    response = view(request)
+
+    # then
+    json_data = json.loads(response.content)
+    assert json_data["data"]["product"]["name"] == product.name
+    assert json_data["data"]["product"]["category"]["name"] == product.category.name
+    assert response.status_code == 200
+    assert request.dataloaders == {}

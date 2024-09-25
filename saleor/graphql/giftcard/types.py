@@ -19,10 +19,11 @@ from ..app.types import App
 from ..channel import ChannelContext
 from ..channel.dataloaders import ChannelByIdLoader
 from ..core.connection import CountableConnection
+from ..core.context import get_database_connection_name
 from ..core.descriptions import ADDED_IN_31, DEPRECATED_IN_3X_FIELD
 from ..core.doc_category import DOC_CATEGORY_GIFT_CARDS
 from ..core.fields import PermissionsField
-from ..core.scalars import Date
+from ..core.scalars import Date, DateTime
 from ..core.tracing import traced_resolver
 from ..core.types import BaseObjectType, ModelObjectType, Money, NonNullList
 from ..meta.types import ObjectWithMetadata
@@ -65,10 +66,10 @@ class GiftCardEventBalance(BaseObjectType):
 
 
 class GiftCardEvent(ModelObjectType[models.GiftCardEvent]):
-    id = graphene.GlobalID(required=True)
-    date = graphene.types.datetime.DateTime(
-        description="Date when event happened at in ISO 8601 format."
+    id = graphene.GlobalID(
+        required=True, description="ID of the event associated with a gift card."
     )
+    date = DateTime(description="Date when event happened at in ISO 8601 format.")
     type = GiftCardEventsEnum(description="Gift card event type.")
     user = graphene.Field(
         "saleor.graphql.account.types.User",
@@ -215,8 +216,12 @@ class GiftCardEvent(ModelObjectType[models.GiftCardEvent]):
 
 
 class GiftCardTag(ModelObjectType[models.GiftCardTag]):
-    id = graphene.GlobalID(required=True)
-    name = graphene.String(required=True)
+    id = graphene.GlobalID(
+        required=True, description="ID of the tag associated with a gift card."
+    )
+    name = graphene.String(
+        required=True, description="Name of the tag associated with a gift card."
+    )
 
     class Meta:
         description = "The gift card tag." + ADDED_IN_31
@@ -225,7 +230,7 @@ class GiftCardTag(ModelObjectType[models.GiftCardTag]):
 
 
 class GiftCard(ModelObjectType[models.GiftCard]):
-    id = graphene.GlobalID(required=True)
+    id = graphene.GlobalID(required=True, description="ID of the gift card.")
     display_code = graphene.String(
         description="Code in format which allows displaying in a user interface.",
         required=True,
@@ -245,7 +250,9 @@ class GiftCard(ModelObjectType[models.GiftCard]):
         ),
         required=True,
     )
-    created = graphene.DateTime(required=True)
+    created = DateTime(
+        required=True, description="Date and time when gift card was created."
+    )
     created_by = graphene.Field(
         "saleor.graphql.account.types.User",
         description=("The user who bought or issued a gift card." + ADDED_IN_31),
@@ -272,8 +279,8 @@ class GiftCard(ModelObjectType[models.GiftCard]):
         ),
         deprecation_reason=DEPRECATED_IN_3X_FIELD,
     )
-    last_used_on = graphene.DateTime()
-    expiry_date = Date()
+    last_used_on = DateTime(description="Date and time when gift card was last used.")
+    expiry_date = Date(description="Expiry date of the gift card.")
     app = graphene.Field(
         App,
         description=(
@@ -322,11 +329,11 @@ class GiftCard(ModelObjectType[models.GiftCard]):
         description="The customer who bought a gift card.",
         deprecation_reason=f"{DEPRECATED_IN_3X_FIELD} Use `createdBy` field instead.",
     )
-    end_date = graphene.types.datetime.DateTime(
+    end_date = DateTime(
         description="End date of gift card.",
         deprecation_reason=f"{DEPRECATED_IN_3X_FIELD} Use `expiryDate` field instead.",
     )
-    start_date = graphene.types.datetime.DateTime(
+    start_date = DateTime(
         description="Start date of gift card.",
         deprecation_reason=f"{DEPRECATED_IN_3X_FIELD}",
     )
@@ -473,7 +480,13 @@ class GiftCard(ModelObjectType[models.GiftCard]):
             if event_type_value := event_filter.get("type"):
                 events = filter_events_by_type(events, event_type_value)
             if orders_value := event_filter.get("orders"):
-                events = filter_events_by_orders(events, orders_value)
+                events = filter_events_by_orders(
+                    events,
+                    orders_value,
+                    database_connection_name=get_database_connection_name(
+                        info.context.allow_replica
+                    ),
+                )
             return events
 
         return (

@@ -1,8 +1,13 @@
+import os
 import re
 from re import Pattern
 from typing import Union
 
 from django.utils.functional import SimpleLazyObject
+
+# Disable Jaeger tracing should be done before importing settings.
+# without this line pytest will start sending traces to Jaeger agent.
+os.environ["JAEGER_AGENT_HOST"] = ""
 
 from ..settings import *  # noqa
 
@@ -45,6 +50,9 @@ AUTH_PASSWORD_VALIDATORS = []
 
 PASSWORD_HASHERS = ["saleor.tests.dummy_password_hasher.DummyHasher"]
 
+OBSERVABILITY_ACTIVE = False
+OBSERVABILITY_REPORT_ALL_API_CALLS = False
+
 PLUGINS = []
 
 PATTERNS_IGNORED_IN_QUERY_CAPTURES: list[Union[Pattern, SimpleLazyObject]] = [
@@ -85,7 +93,13 @@ FdkAmFzQhgLtnEtnb+eBI7DNOJEuPLD52Jwnq2pGnJ/LxlqjjWJ5FsQQVSoDHGfM
 8yodVX6OCKwHYrgleLjVWs5ZmaGfGpqcy1YgquiYGVF4x8qBe5bpwHw=
 -----END RSA PRIVATE KEY-----"""
 
-DATABASE_CONNECTION_REPLICA_NAME = DATABASE_CONNECTION_DEFAULT_NAME  # noqa: F405
-
 HTTP_IP_FILTER_ENABLED = False
 HTTP_IP_FILTER_ALLOW_LOOPBACK_IPS = True
+
+MIDDLEWARE.insert(0, "saleor.core.db.connection.restrict_writer_middleware")  # noqa: F405
+
+CHECKOUT_WEBHOOK_EVENTS_CELERY_QUEUE_NAME = "checkout_events_queue"
+ORDER_WEBHOOK_EVENTS_CELERY_QUEUE_NAME = "order_events_queue"
+
+PRIVATE_FILE_STORAGE = "saleor.tests.storages.PrivateFileSystemStorage"
+PRIVATE_MEDIA_ROOT: str = os.path.join(PROJECT_ROOT, "private-media")  # noqa: F405

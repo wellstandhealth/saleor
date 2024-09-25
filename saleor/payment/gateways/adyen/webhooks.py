@@ -213,7 +213,9 @@ def create_order(payment, checkout, manager):
         )
     except ValidationError as e:
         logger.info(
-            "Failed to create order from checkout %s.", checkout.pk, extra={"error": e}
+            "Failed to create order from checkout %s.",
+            checkout.pk,
+            extra={"error": str(e)},
         )
         return None
     # Refresh the payment to assign the newly created order
@@ -280,7 +282,7 @@ def handle_authorization(notification: dict[str, Any], gateway_config: GatewayCo
         # We don't know anything about that payment
         return
 
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     adyen_auto_capture = gateway_config.connection_params["adyen_auto_capture"]
     kind = TransactionKind.AUTH
     if adyen_auto_capture:
@@ -291,8 +293,8 @@ def handle_authorization(notification: dict[str, Any], gateway_config: GatewayCo
         notification_payment_amount = price_from_minor_unit(
             amount.get("value"), amount.get("currency")
         )
-    except TypeError as e:
-        logger.exception("Cannot convert amount from minor unit", extra={"error": e})
+    except TypeError:
+        logger.exception("Cannot convert amount from minor unit")
         return
 
     if notification_payment_amount < payment.total:
@@ -380,7 +382,7 @@ def handle_cancellation(
         payment, success_msg, failed_msg, new_transaction.is_success
     )
     if payment.order and new_transaction.is_success:
-        manager = get_plugins_manager()
+        manager = get_plugins_manager(allow_replica=False)
         cancel_order(payment.order, None, None, manager)
 
 
@@ -412,7 +414,7 @@ def handle_capture(notification: dict[str, Any], _gateway_config: GatewayConfig)
     if not payment:
         return
 
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
 
     transaction = get_transaction(payment, transaction_id, TransactionKind.CAPTURE)
 
@@ -534,7 +536,7 @@ def handle_refund(notification: dict[str, Any], _gateway_config: GatewayConfig):
             None,
             transaction.amount,
             payment,
-            get_plugins_manager(),
+            get_plugins_manager(allow_replica=False),
         )
 
 
@@ -849,10 +851,14 @@ def handle_order_closed(notification: dict[str, Any], gateway_config: GatewayCon
     order = None
     try:
         order = handle_not_created_order(
-            notification, payment, checkout, kind, get_plugins_manager()
+            notification,
+            payment,
+            checkout,
+            kind,
+            get_plugins_manager(allow_replica=False),
         )
-    except Exception as e:
-        logger.exception("Exception during order creation", extra={"error": e})
+    except Exception:
+        logger.exception("Exception during order creation")
         return
     finally:
         if not order and adyen_partial_payments:
@@ -1088,7 +1094,7 @@ def prepare_api_request_data(request: WSGIRequest, data: dict):
         )
 
     params = data["parameters"]
-    request_data: "QueryDict" = QueryDict("")
+    request_data: QueryDict = QueryDict("")
 
     if all([param in request.GET for param in params]):
         request_data = request.GET
@@ -1170,7 +1176,7 @@ def handle_api_response(
         gateway_response=gateway_response,
     )
     if is_success and not action_required and not payment.order and checkout:
-        manager = get_plugins_manager()
+        manager = get_plugins_manager(allow_replica=False)
 
         confirm_payment_and_set_back_to_confirm(payment, manager, channel_slug)
         payment.refresh_from_db()  # refresh charge_status

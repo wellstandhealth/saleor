@@ -1,8 +1,9 @@
 import pytest
 
+from .....product.tasks import recalculate_discounted_price_for_products_task
 from ...product.utils.preparing_product import prepare_product
 from ...promotions.utils import create_promotion, create_promotion_rule
-from ...shop.utils.preparing_shop import prepare_shop
+from ...shop.utils.preparing_shop import prepare_default_shop
 from ...utils import assign_permissions
 from ...vouchers.utils import (
     add_catalogue_to_voucher,
@@ -23,14 +24,16 @@ def prepare_promotion(
     e2e_staff_api_client,
     product_id,
     channel_id,
-    promotion_type,
     promotion_value,
+    promotion_value_type,
 ):
     promotion_name = "test_promotion"
+    promotion_type = "CATALOGUE"
 
     promotion_data = create_promotion(
         e2e_staff_api_client,
         promotion_name,
+        promotion_type,
     )
     promotion_id = promotion_data["id"]
 
@@ -41,15 +44,17 @@ def prepare_promotion(
     catalogue_predicate = {
         "productPredicate": {"ids": [product_id]},
     }
-
+    input = {
+        "promotion": promotion_id,
+        "channels": [channel_id],
+        "name": promotion_rule_name,
+        "cataloguePredicate": catalogue_predicate,
+        "rewardValue": promotion_value,
+        "rewardValueType": promotion_value_type,
+    }
     promotion_rule = create_promotion_rule(
         e2e_staff_api_client,
-        promotion_id,
-        catalogue_predicate,
-        promotion_type,
-        promotion_value,
-        promotion_rule_name,
-        channel_id,
+        input,
     )
     product_predicate = promotion_rule["cataloguePredicate"]["productPredicate"]["ids"]
     assert promotion_rule["channels"][0]["id"] == channel_id
@@ -104,7 +109,7 @@ def prepare_voucher(
     (
         "variant_price",
         "promotion_value",
-        "promotion_type",
+        "promotion_value_type",
         "expected_promotion_discount",
         "voucher_discount_value",
         "voucher_discount_type",
@@ -121,13 +126,11 @@ def prepare_voucher(
 def test_checkout_with_promotion_and_voucher_CORE_2107(
     e2e_not_logged_api_client,
     e2e_staff_api_client,
-    permission_manage_products,
-    permission_manage_channels,
-    permission_manage_shipping,
+    shop_permissions,
     permission_manage_product_types_and_attributes,
     permission_manage_discounts,
     variant_price,
-    promotion_type,
+    promotion_value_type,
     promotion_value,
     expected_promotion_discount,
     voucher_discount_value,
@@ -137,20 +140,17 @@ def test_checkout_with_promotion_and_voucher_CORE_2107(
 ):
     # Before
     permissions = [
-        permission_manage_products,
-        permission_manage_channels,
-        permission_manage_shipping,
+        *shop_permissions,
         permission_manage_product_types_and_attributes,
         permission_manage_discounts,
     ]
     assign_permissions(e2e_staff_api_client, permissions)
 
-    (
-        warehouse_id,
-        channel_id,
-        channel_slug,
-        shipping_method_id,
-    ) = prepare_shop(e2e_staff_api_client)
+    shop_data = prepare_default_shop(e2e_staff_api_client)
+    channel_id = shop_data["channel"]["id"]
+    channel_slug = shop_data["channel"]["slug"]
+    warehouse_id = shop_data["warehouse"]["id"]
+    shipping_method_id = shop_data["shipping_method"]["id"]
 
     (
         product_id,
@@ -167,8 +167,8 @@ def test_checkout_with_promotion_and_voucher_CORE_2107(
         e2e_staff_api_client,
         product_id,
         channel_id,
-        promotion_type,
         promotion_value,
+        promotion_value_type,
     )
 
     voucher_discount_value, voucher_code = prepare_voucher(
@@ -178,6 +178,10 @@ def test_checkout_with_promotion_and_voucher_CORE_2107(
         voucher_discount_type,
         voucher_discount_value,
     )
+
+    # prices are updated in the background, we need to force it to retrieve the correct
+    # ones
+    recalculate_discounted_price_for_products_task()
 
     # Step 1 - Create checkout for product with promotion
     lines = [
@@ -193,7 +197,6 @@ def test_checkout_with_promotion_and_voucher_CORE_2107(
     )
     checkout_id = checkout_data["id"]
     checkout_lines = checkout_data["lines"][0]
-    shipping_method_id = checkout_data["shippingMethods"][0]["id"]
 
     assert checkout_data["isShippingRequired"] is True
     unit_price_with_promotion = round(
@@ -259,4 +262,6 @@ def test_checkout_with_promotion_and_voucher_CORE_2107(
     assert order_line["undiscountedUnitPrice"]["gross"]["amount"] == float(
         product_variant_price
     )
-    assert order_line["unitDiscountReason"] == f"Promotion: {promotion_id}"
+    assert order_line["unitDiscountReason"] == (
+        f"Entire order voucher code: {voucher_code} & Promotion: {promotion_id}"
+    )

@@ -18,7 +18,7 @@ from jwt import PyJWTError
 
 from ...account.models import Group, User
 from ...account.search import prepare_user_search_document_value
-from ...account.utils import get_user_groups_permissions
+from ...account.utils import get_user_groups_permissions, send_user_event
 from ...core.http_client import HTTPClient
 from ...core.jwt import (
     JWT_ACCESS_TYPE,
@@ -132,19 +132,19 @@ def get_user_info(user_info_url, access_token) -> Optional[dict]:
     except requests.exceptions.HTTPError as e:
         logger.warning(
             "Fetching OIDC user info failed. HTTP error occurred",
-            extra={"user_info_url": user_info_url, "error": e},
+            extra={"user_info_url": user_info_url, "error": str(e)},
         )
         return None
     except requests.exceptions.RequestException as e:
         logger.warning(
             "Fetching OIDC user info failed",
-            extra={"user_info_url": user_info_url, "error": e},
+            extra={"user_info_url": user_info_url, "error": str(e)},
         )
         return None
     except json.JSONDecodeError as e:
         logger.warning(
             "Invalid OIDC user info response",
-            extra={"user_info_url": user_info_url, "error": e},
+            extra={"user_info_url": user_info_url, "error": str(e)},
         )
         return None
 
@@ -154,7 +154,8 @@ def decode_access_token(token, jwks_url):
         return get_decoded_token(token, jwks_url)
     except (JoseError, ValueError) as e:
         logger.info(
-            "Invalid OIDC access token format", extra={"error": e, "jwks_url": jwks_url}
+            "Invalid OIDC access token format",
+            extra={"error": str(e), "jwks_url": jwks_url},
         )
         return None
 
@@ -173,7 +174,7 @@ def get_user_from_oauth_access_token_in_jwt_format(
     except (JoseError, ValueError) as e:
         logger.info(
             "OIDC access token validation failed",
-            extra={"error": e, "user_info_url": user_info_url},
+            extra={"error": str(e), "user_info_url": user_info_url},
         )
         return None
 
@@ -190,13 +191,13 @@ def get_user_from_oauth_access_token_in_jwt_format(
         return None
 
     try:
-        user = get_or_create_user_from_payload(
+        user, user_created, user_updated = get_or_create_user_from_payload(
             user_info,
             user_info_url,
             last_login=token_payload.get("iat"),
         )
     except AuthenticationError as e:
-        logger.info("Unable to create a user object", extra={"error": e})
+        logger.info("Unable to create a user object", extra={"error": str(e)})
         return None
 
     scope = token_payload.get("scope")
@@ -241,7 +242,11 @@ def get_user_from_oauth_access_token_in_jwt_format(
 
     if is_staff is not None:
         user.is_staff = is_staff
+        user_updated = True
         user.save(update_fields=["is_staff"])
+
+    if user_created or user_updated:
+        send_user_event(user, user_created, user_updated)
 
     return user
 
@@ -276,7 +281,7 @@ def get_user_from_oauth_access_token(
             "Failed to fetch OIDC user info", extra={"user_info_url": user_info_url}
         )
         return None
-    user = get_or_create_user_from_payload(
+    user, user_created, user_updated = get_or_create_user_from_payload(
         user_info,
         oauth_url=user_info_url,
     )
@@ -284,11 +289,16 @@ def get_user_from_oauth_access_token(
     email_domain = get_domain_from_email(user.email)
     is_staff_email = email_domain in staff_user_domains
     if not use_scope_permissions and not is_staff_email:
-        user.is_staff = False
+        if user.is_staff:
+            user.is_staff = False
+            user_updated = True
     elif is_staff_email:
         assign_staff_to_default_group_and_update_permissions(
             user, staff_default_group_name
         )
+
+    if user_created or user_updated:
+        send_user_event(user, user_created, user_updated)
 
     return user
 
@@ -379,7 +389,7 @@ def get_or_create_user_from_payload(
     payload: dict,
     oauth_url: str,
     last_login: Optional[int] = None,
-) -> User:
+) -> tuple[User, bool, bool]:
     oidc_metadata_key = f"oidc:{oauth_url}"
     user_email = payload.get("email")
     if not user_email:
@@ -404,16 +414,18 @@ def get_or_create_user_from_payload(
     user_id = cache.get(cache_key)
     if user_id:
         get_kwargs = {"id": user_id}
+    created = False
     try:
         user = User.objects.using(settings.DATABASE_CONNECTION_REPLICA_NAME).get(
             **get_kwargs
         )
     except User.DoesNotExist:
-        user, _ = User.objects.get_or_create(
+        user, created = User.objects.get_or_create(
             email=user_email,
             defaults=defaults_create,
         )
         match_orders_with_new_user(user)
+
     except User.MultipleObjectsReturned:
         logger.warning("Multiple users returned for single OIDC sub ID")
         user, _ = User.objects.get_or_create(
@@ -421,11 +433,12 @@ def get_or_create_user_from_payload(
             defaults=defaults_create,
         )
 
-    site_settings = Site.objects.get_current().settings
-    if not user.can_login(site_settings):  # it is true only if we fetch disabled user.
+    # User logged in by OpenID are treated as confirmed by default so we only need to
+    # check if user is active
+    if not user.is_active:
         raise AuthenticationError("Unable to log in.")
 
-    _update_user_details(
+    updated = _update_user_details(
         user=user,
         oidc_key=oidc_metadata_key,
         user_email=user_email,
@@ -436,7 +449,7 @@ def get_or_create_user_from_payload(
     )
 
     cache.set(cache_key, user.id, min(JWKS_CACHE_TIME, OIDC_DEFAULT_CACHE_TIME))
-    return user
+    return user, created, updated
 
 
 def get_domain_from_email(email: str):
@@ -453,7 +466,7 @@ def _update_user_details(
     user_last_name: str,
     sub: str,
     last_login: Optional[int],
-):
+) -> bool:
     user_sub = user.get_value_from_private_metadata(oidc_key)
     fields_to_save = set()
     if user_sub != sub:
@@ -466,7 +479,7 @@ def _update_user_details(
                 "Unable to update user email as the new one already exists in DB",
                 extra={"oidc_key": oidc_key},
             )
-            return
+            return False
         user.email = user_email
         match_orders_with_new_user(user)
         fields_to_save.update({"email", "search_document"})
@@ -493,13 +506,20 @@ def _update_user_details(
         user.last_name = user_last_name
         fields_to_save.update({"last_name", "search_document"})
 
-    if "search_document" in fields_to_save:
+    if not user.search_document or "search_document" in fields_to_save:
         user.search_document = prepare_user_search_document_value(
             user, attach_addresses_data=False
         )
+        fields_to_save.add("search_document")
+
+    if not user.is_confirmed:
+        user.is_confirmed = True
+        fields_to_save.add("is_confirmed")
 
     if fields_to_save:
         user.save(update_fields=fields_to_save)
+
+    return bool(fields_to_save)
 
 
 def get_staff_user_domains(

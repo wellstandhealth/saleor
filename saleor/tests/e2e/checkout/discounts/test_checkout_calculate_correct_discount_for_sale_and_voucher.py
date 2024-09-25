@@ -1,8 +1,9 @@
 import pytest
 
+from .....product.tasks import recalculate_discounted_price_for_products_task
 from ...product.utils.preparing_product import prepare_product
 from ...sales.utils import create_sale, create_sale_channel_listing, sale_catalogues_add
-from ...shop.utils.preparing_shop import prepare_shop
+from ...shop.utils.preparing_shop import prepare_default_shop
 from ...utils import assign_permissions
 from ...vouchers.utils import create_voucher, create_voucher_channel_listing
 from ..utils import (
@@ -101,9 +102,7 @@ def prepare_voucher(
 def test_checkout_calculate_discount_for_sale_and_voucher_1014(
     e2e_not_logged_api_client,
     e2e_staff_api_client,
-    permission_manage_products,
-    permission_manage_channels,
-    permission_manage_shipping,
+    shop_permissions,
     permission_manage_product_types_and_attributes,
     permission_manage_discounts,
     variant_price,
@@ -117,20 +116,17 @@ def test_checkout_calculate_discount_for_sale_and_voucher_1014(
 ):
     # Before
     permissions = [
-        permission_manage_products,
-        permission_manage_channels,
-        permission_manage_shipping,
+        *shop_permissions,
         permission_manage_product_types_and_attributes,
         permission_manage_discounts,
     ]
     assign_permissions(e2e_staff_api_client, permissions)
 
-    (
-        warehouse_id,
-        channel_id,
-        channel_slug,
-        shipping_method_id,
-    ) = prepare_shop(e2e_staff_api_client)
+    shop_data = prepare_default_shop(e2e_staff_api_client)
+    channel_id = shop_data["channel"]["id"]
+    channel_slug = shop_data["channel"]["slug"]
+    warehouse_id = shop_data["warehouse"]["id"]
+    shipping_method_id = shop_data["shipping_method"]["id"]
 
     (
         _product_id,
@@ -159,6 +155,10 @@ def test_checkout_calculate_discount_for_sale_and_voucher_1014(
         voucher_discount_value,
     )
 
+    # prices are updated in the background, we need to force it to retrieve the correct
+    # ones
+    recalculate_discounted_price_for_products_task()
+
     # Step 1 - Create checkout for product on sale
     lines = [
         {"variantId": product_variant_id, "quantity": 1},
@@ -173,7 +173,6 @@ def test_checkout_calculate_discount_for_sale_and_voucher_1014(
     )
     checkout_id = checkout_data["id"]
     checkout_lines = checkout_data["lines"][0]
-    shipping_method_id = checkout_data["shippingMethods"][0]["id"]
 
     assert checkout_data["isShippingRequired"] is True
     unit_price_on_sale = round(float(product_variant_price - expected_sale_discount), 2)
@@ -232,7 +231,9 @@ def test_checkout_calculate_discount_for_sale_and_voucher_1014(
     order_line = order_data["lines"][0]
     assert order_line["unitDiscountType"] == "FIXED"
     assert order_line["unitPrice"]["gross"]["amount"] == expected_unit_price
-    assert order_line["unitDiscountReason"] == f"Sale: {sale_id}"
+    assert order_line["unitDiscountReason"] == (
+        f"Entire order voucher code: {voucher_code} & Sale: {sale_id}"
+    )
     assert order_data["total"]["gross"]["amount"] == total_gross_amount
     assert order_data["subtotal"]["gross"]["amount"] == subtotal_amount
     assert order_line["undiscountedUnitPrice"]["gross"]["amount"] == float(

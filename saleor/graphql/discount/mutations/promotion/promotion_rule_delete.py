@@ -1,9 +1,12 @@
 import graphene
 
-from .....discount import events, models
+from .....discount import PromotionType, events, models
 from .....graphql.core.mutations import ModelDeleteMutation
 from .....permission.enums import DiscountPermissions
-from .....product.tasks import update_products_discounted_prices_for_promotion_task
+from .....product.utils.product import (
+    get_channel_to_products_map_from_rules,
+    mark_products_in_channels_as_dirty,
+)
 from .....webhook.event_types import WebhookEventAsyncType
 from ....app.dataloaders import get_app_promise
 from ....core import ResolveInfo
@@ -14,7 +17,6 @@ from ....core.utils import WebhookEventInfo
 from ....plugins.dataloaders import get_plugin_manager_promise
 from ...enums import PromotionRuleDeleteErrorCode
 from ...types import PromotionRule
-from ...utils import get_products_for_rule
 from ..utils import clear_promotion_old_sale_id
 
 
@@ -49,10 +51,11 @@ class PromotionRuleDelete(ModelDeleteMutation):
         """Perform a mutation that deletes a model instance."""
         instance = cls.get_instance(info, external_reference=external_reference, id=id)
         cls.clean_instance(info, instance)
-
-        products = get_products_for_rule(instance)
-        product_ids = list(products.values_list("id", flat=True))
-
+        channel_to_products_map = {}
+        if instance.promotion.type == PromotionType.CATALOGUE:
+            channel_to_products_map = get_channel_to_products_map_from_rules(
+                models.PromotionRule.objects.filter(id=instance.id)
+            )
         db_id = instance.id
         promotion = instance.promotion
         instance.delete()
@@ -63,8 +66,8 @@ class PromotionRuleDelete(ModelDeleteMutation):
         # ID so that the success response contains ID of the deleted object.
         instance.id = db_id
 
-        if product_ids:
-            update_products_discounted_prices_for_promotion_task.delay(product_ids)
+        if channel_to_products_map:
+            cls.call_event(mark_products_in_channels_as_dirty, channel_to_products_map)
 
         app = get_app_promise(info.context).get()
         events.rule_deleted_event(info.context.user, app, [instance])

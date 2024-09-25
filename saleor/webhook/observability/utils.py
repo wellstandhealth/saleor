@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import partial
 from time import monotonic
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from asgiref.local import Local
 from django.conf import settings
@@ -46,7 +46,7 @@ class WebhookData:
 
 
 def get_buffer_name() -> str:
-    return cache.make_key(BUFFER_KEY)
+    return cache.make_key(BUFFER_KEY, version=2)
 
 
 _webhooks_mem_cache: dict[str, tuple[list[WebhookData], float]] = {}
@@ -90,19 +90,19 @@ def task_next_retry_date(retry_error: "Retry") -> Optional[datetime]:
     return None
 
 
-def put_event(generate_payload: Callable[[], Any]):
+def put_event(generate_payload: Callable[[], bytes]):
     try:
         payload = generate_payload()
         with opentracing_trace("put_event", "buffer"):
             if get_buffer(get_buffer_name()).put_event(payload):
                 logger.warning("Observability buffer full, event dropped.")
     except TruncationError as err:
-        logger.warning("Observability event dropped. %s", err, extra=err.extra)
+        logger.warning("Observability event dropped. %s", str(err), extra=err.extra)
     except Exception:
         logger.error("Observability event dropped.", exc_info=True)
 
 
-def pop_events_with_remaining_size() -> tuple[list[Any], int]:
+def pop_events_with_remaining_size() -> tuple[list[bytes], int]:
     with opentracing_trace("pop_events", "buffer"):
         try:
             buffer = get_buffer(get_buffer_name())
@@ -126,7 +126,7 @@ class GraphQLOperationResponse:
 class ApiCall:
     def __init__(self, request: "HttpRequest"):
         self.gql_operations: list[GraphQLOperationResponse] = []
-        self.response: Optional["HttpResponse"] = None
+        self.response: Optional[HttpResponse] = None
         self._reported = False
         self.request = request
 

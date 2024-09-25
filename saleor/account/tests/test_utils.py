@@ -5,6 +5,7 @@ from django.test import override_settings
 
 from ...checkout import AddressType
 from ...plugins.manager import get_plugins_manager
+from ...tests.utils import flush_post_commit_hooks
 from ..models import Address, User
 from ..utils import (
     get_user_groups_permissions,
@@ -13,6 +14,7 @@ from ..utils import (
     remove_the_oldest_user_address,
     remove_the_oldest_user_address_if_address_limit_is_reached,
     retrieve_user_by_email,
+    send_user_event,
     store_user_address,
 )
 
@@ -72,7 +74,7 @@ def test_store_user_address_uses_existing_one(address):
 
     expected_user_addresses_count = 1
 
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     store_user_address(user, address, AddressType.BILLING, manager)
 
     assert user.addresses.count() == expected_user_addresses_count
@@ -86,7 +88,7 @@ def test_store_user_address_uses_existing_one_despite_duplicated(address):
 
     expected_user_addresses_count = 2
 
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     store_user_address(user, address, AddressType.BILLING, manager)
 
     assert user.addresses.count() == expected_user_addresses_count
@@ -97,7 +99,7 @@ def test_store_user_address_create_new_address_if_not_associated(address):
     user = User.objects.create_user("test@example.com", "password")
     expected_user_addresses_count = 1
 
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     store_user_address(user, address, AddressType.BILLING, manager)
 
     assert user.addresses.count() == expected_user_addresses_count
@@ -113,7 +115,7 @@ def test_store_user_address_address_not_saved(address):
 
     address_count = user.addresses.count()
 
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     store_user_address(user, address, AddressType.BILLING, manager)
 
     assert user.addresses.count() == address_count
@@ -237,3 +239,113 @@ def get_user_groups_permissions_user(
 
     # then
     assert permissions.count() == 2
+
+
+@patch("saleor.plugins.manager.PluginsManager.customer_updated")
+@patch("saleor.plugins.manager.PluginsManager.customer_created")
+@patch("saleor.plugins.manager.PluginsManager.staff_updated")
+@patch("saleor.plugins.manager.PluginsManager.staff_created")
+def test_send_user_event_no_webhook_sent(
+    mock_staff_created_webhook,
+    mock_staff_updated_webhook,
+    mock_customer_created_webhook,
+    mock_customer_updated_webhook,
+    customer_user,
+):
+    # when
+    send_user_event(customer_user, False, False)
+
+    # then
+    flush_post_commit_hooks()
+    mock_staff_created_webhook.assert_not_called()
+    mock_staff_updated_webhook.assert_not_called()
+    mock_customer_created_webhook.assert_not_called()
+    mock_customer_updated_webhook.assert_not_called()
+
+
+@patch("saleor.plugins.manager.PluginsManager.customer_updated")
+@patch("saleor.plugins.manager.PluginsManager.customer_created")
+@patch("saleor.plugins.manager.PluginsManager.staff_updated")
+@patch("saleor.plugins.manager.PluginsManager.staff_created")
+def test_send_user_event_customer_created_event(
+    mock_staff_created_webhook,
+    mock_staff_updated_webhook,
+    mock_customer_created_webhook,
+    mock_customer_updated_webhook,
+    customer_user,
+):
+    # when
+    send_user_event(customer_user, True, True)
+
+    # then
+    flush_post_commit_hooks()
+    mock_customer_created_webhook.assert_called_once_with(customer_user)
+    mock_customer_updated_webhook.assert_not_called()
+    mock_staff_created_webhook.assert_not_called()
+    mock_staff_updated_webhook.assert_not_called()
+
+
+@patch("saleor.plugins.manager.PluginsManager.customer_updated")
+@patch("saleor.plugins.manager.PluginsManager.customer_created")
+@patch("saleor.plugins.manager.PluginsManager.staff_updated")
+@patch("saleor.plugins.manager.PluginsManager.staff_created")
+def test_send_user_event_customer_updated_event(
+    mock_staff_created_webhook,
+    mock_staff_updated_webhook,
+    mock_customer_created_webhook,
+    mock_customer_updated_webhook,
+    customer_user,
+):
+    # when
+    send_user_event(customer_user, False, True)
+
+    # then
+    flush_post_commit_hooks()
+    mock_customer_updated_webhook.assert_called_once_with(customer_user)
+    mock_customer_created_webhook.assert_not_called()
+    mock_staff_created_webhook.assert_not_called()
+    mock_staff_updated_webhook.assert_not_called()
+
+
+@patch("saleor.plugins.manager.PluginsManager.customer_updated")
+@patch("saleor.plugins.manager.PluginsManager.customer_created")
+@patch("saleor.plugins.manager.PluginsManager.staff_updated")
+@patch("saleor.plugins.manager.PluginsManager.staff_created")
+def test_send_user_event_staff_created_event(
+    mock_staff_created_webhook,
+    mock_staff_updated_webhook,
+    mock_customer_created_webhook,
+    mock_customer_updated_webhook,
+    staff_user,
+):
+    # when
+    send_user_event(staff_user, True, True)
+
+    # then
+    flush_post_commit_hooks()
+    mock_staff_created_webhook.assert_called_once_with(staff_user)
+    mock_staff_updated_webhook.assert_not_called()
+    mock_customer_created_webhook.assert_not_called()
+    mock_customer_updated_webhook.assert_not_called()
+
+
+@patch("saleor.plugins.manager.PluginsManager.customer_updated")
+@patch("saleor.plugins.manager.PluginsManager.customer_created")
+@patch("saleor.plugins.manager.PluginsManager.staff_updated")
+@patch("saleor.plugins.manager.PluginsManager.staff_created")
+def test_send_user_event_staff_updated_event(
+    mock_staff_created_webhook,
+    mock_staff_updated_webhook,
+    mock_customer_created_webhook,
+    mock_customer_updated_webhook,
+    staff_user,
+):
+    # when
+    send_user_event(staff_user, False, True)
+
+    # then
+    flush_post_commit_hooks()
+    mock_staff_updated_webhook.assert_called_once_with(staff_user)
+    mock_staff_created_webhook.assert_not_called()
+    mock_customer_created_webhook.assert_not_called()
+    mock_customer_updated_webhook.assert_not_called()

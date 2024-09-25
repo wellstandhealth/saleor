@@ -1,5 +1,5 @@
 import graphene
-from django.utils import timezone
+from django.conf import settings
 from graphene import AbstractType, Union
 from rx import Observable
 
@@ -34,6 +34,7 @@ from ...product.models import (
 )
 from ...shipping.models import ShippingMethodTranslation
 from ...thumbnail.views import TYPE_TO_MODEL_DATA_MAPPING
+from ...webhook.const import MAX_FILTERABLE_CHANNEL_SLUGS_LIMIT
 from ...webhook.event_types import WebhookEventAsyncType, WebhookEventSyncType
 from ..account.types import User as UserType
 from ..app.types import App as AppType
@@ -58,6 +59,8 @@ from ..core.descriptions import (
     ADDED_IN_316,
     ADDED_IN_317,
     ADDED_IN_318,
+    ADDED_IN_319,
+    ADDED_IN_320,
     DEPRECATED_IN_3X_EVENT,
     PREVIEW_FEATURE,
 )
@@ -73,7 +76,7 @@ from ..core.doc_category import (
     DOC_CATEGORY_TAXES,
     DOC_CATEGORY_USERS,
 )
-from ..core.scalars import JSON, PositiveDecimal
+from ..core.scalars import JSON, DateTime, PositiveDecimal
 from ..core.types import NonNullList, SubscriptionObjectType
 from ..core.types.order_or_checkout import OrderOrCheckout
 from ..order.dataloaders import OrderByIdLoader
@@ -116,7 +119,7 @@ class IssuingPrincipal(Union):
 
 
 class Event(graphene.Interface):
-    issued_at = graphene.DateTime(description="Time of the event.")
+    issued_at = DateTime(description="Time of the event.")
     version = graphene.String(description="Saleor version that triggered the event.")
     issuing_principal = graphene.Field(
         IssuingPrincipal,
@@ -137,8 +140,8 @@ class Event(graphene.Interface):
         return cls.get_type(type_str)
 
     @staticmethod
-    def resolve_issued_at(_root, _info: ResolveInfo):
-        return timezone.now()
+    def resolve_issued_at(_root, info: ResolveInfo):
+        return info.context.request_time
 
     @staticmethod
     def resolve_version(_root, _info: ResolveInfo):
@@ -2048,6 +2051,13 @@ class TransactionSessionBase(SubscriptionObjectType, AbstractType):
 
 
 class TransactionInitializeSession(TransactionSessionBase):
+    idempotency_key = graphene.String(
+        description=(
+            "Idempotency key assigned to the transaction initialize." + ADDED_IN_314
+        ),
+        required=True,
+    )
+
     class Meta:
         root_type = None
         enable_dry_run = False
@@ -2058,6 +2068,13 @@ class TransactionInitializeSession(TransactionSessionBase):
             + PREVIEW_FEATURE
         )
         doc_category = DOC_CATEGORY_PAYMENTS
+
+    @classmethod
+    def resolve_idempotency_key(
+        cls, root: tuple[str, TransactionSessionData], _info: ResolveInfo
+    ):
+        _, transaction_session_data = root
+        return transaction_session_data.idempotency_key
 
 
 class TransactionProcessSession(TransactionSessionBase):
@@ -2399,6 +2416,34 @@ class VoucherDeleted(SubscriptionObjectType, VoucherBase):
         description = "Event sent when voucher is deleted." + ADDED_IN_34
 
 
+class VoucherCodeBase(AbstractType):
+    voucher_codes = NonNullList(
+        "saleor.graphql.discount.types.VoucherCode",
+        description="The voucher codes the event relates to.",
+    )
+
+    @staticmethod
+    def resolve_voucher_codes(root, _info: ResolveInfo):
+        _, voucher_codes = root
+        return voucher_codes
+
+
+class VoucherCodesCreated(SubscriptionObjectType, VoucherCodeBase):
+    class Meta:
+        root_type = "VoucherCode"
+        enable_dry_run = True
+        interfaces = (Event,)
+        description = "Event sent when new voucher codes were created." + ADDED_IN_319
+
+
+class VoucherCodesDeleted(SubscriptionObjectType, VoucherCodeBase):
+    class Meta:
+        root_type = "VoucherCode"
+        enable_dry_run = True
+        interfaces = (Event,)
+        description = "Event sent when voucher codes were deleted." + ADDED_IN_319
+
+
 class VoucherMetadataUpdated(SubscriptionObjectType, VoucherBase):
     class Meta:
         root_type = "Voucher"
@@ -2526,7 +2571,10 @@ class ShippingListMethodsForCheckout(SubscriptionObjectType, CheckoutBase):
     @plugin_manager_promise_callback
     def resolve_shipping_methods(root, info: ResolveInfo, manager):
         _, checkout = root
-        return resolve_shipping_methods_for_checkout(info, checkout, manager)
+        database_connection_name = get_database_connection_name(info.context)
+        return resolve_shipping_methods_for_checkout(
+            info, checkout, manager, database_connection_name
+        )
 
     class Meta:
         root_type = None
@@ -2567,7 +2615,10 @@ class CheckoutFilterShippingMethods(SubscriptionObjectType, CheckoutBase):
     @plugin_manager_promise_callback
     def resolve_shipping_methods(root, info: ResolveInfo, manager):
         _, checkout = root
-        return resolve_shipping_methods_for_checkout(info, checkout, manager)
+        database_connection_name = get_database_connection_name(info.context)
+        return resolve_shipping_methods_for_checkout(
+            info, checkout, manager, database_connection_name
+        )
 
     class Meta:
         root_type = None
@@ -2652,10 +2703,149 @@ class WarehouseMetadataUpdated(SubscriptionObjectType, WarehouseBase):
         description = "Event sent when warehouse metadata is updated." + ADDED_IN_38
 
 
+def default_order_resolver(root, info, channels=None):
+    return Observable.from_([root])
+
+
+channels_argument = graphene.Argument(
+    NonNullList(graphene.String),
+    description=(
+        "List of channel slugs. The event will be sent only if the order "
+        "belongs to one of the provided channels. If the channel slug list is "
+        "empty, orders that belong to any channel will be sent. Maximally "
+        f"{MAX_FILTERABLE_CHANNEL_SLUGS_LIMIT} items."
+    ),
+)
+
+
 class Subscription(SubscriptionObjectType):
     event = graphene.Field(
         Event,
         description="Look up subscription event." + ADDED_IN_32,
+    )
+    draft_order_created = graphene.Field(
+        DraftOrderCreated,
+        description=(
+            "Event sent when new draft order is created."
+            + ADDED_IN_320
+            + PREVIEW_FEATURE
+        ),
+        resolver=default_order_resolver,
+        channels=channels_argument,
+    )
+    draft_order_updated = graphene.Field(
+        DraftOrderUpdated,
+        description=(
+            "Event sent when draft order is updated." + ADDED_IN_320 + PREVIEW_FEATURE
+        ),
+        resolver=default_order_resolver,
+        channels=channels_argument,
+    )
+    draft_order_deleted = graphene.Field(
+        DraftOrderDeleted,
+        description=(
+            "Event sent when draft order is deleted." + ADDED_IN_320 + PREVIEW_FEATURE
+        ),
+        resolver=default_order_resolver,
+        channels=channels_argument,
+    )
+    order_created = graphene.Field(
+        OrderCreated,
+        description=(
+            "Event sent when new order is created." + ADDED_IN_320 + PREVIEW_FEATURE
+        ),
+        resolver=default_order_resolver,
+        channels=channels_argument,
+    )
+    order_updated = graphene.Field(
+        OrderUpdated,
+        description=(
+            "Event sent when order is updated." + ADDED_IN_320 + PREVIEW_FEATURE
+        ),
+        resolver=default_order_resolver,
+        channels=channels_argument,
+    )
+    order_confirmed = graphene.Field(
+        OrderConfirmed,
+        description=(
+            "Event sent when order is confirmed." + ADDED_IN_320 + PREVIEW_FEATURE
+        ),
+        resolver=default_order_resolver,
+        channels=channels_argument,
+    )
+    order_paid = graphene.Field(
+        OrderPaid,
+        description=(
+            "Payment has been made. The order may be partially or fully paid."
+            + ADDED_IN_320
+            + PREVIEW_FEATURE
+        ),
+        resolver=default_order_resolver,
+        channels=channels_argument,
+    )
+    order_fully_paid = graphene.Field(
+        OrderFullyPaid,
+        description=(
+            "Event sent when order is fully paid." + ADDED_IN_320 + PREVIEW_FEATURE
+        ),
+        resolver=default_order_resolver,
+        channels=channels_argument,
+    )
+    order_refunded = graphene.Field(
+        OrderRefunded,
+        description=(
+            "The order received a refund. The order may be partially or fully "
+            "refunded." + ADDED_IN_320 + PREVIEW_FEATURE
+        ),
+        resolver=default_order_resolver,
+        channels=channels_argument,
+    )
+    order_fully_refunded = graphene.Field(
+        OrderFullyRefunded,
+        description=("The order is fully refunded." + ADDED_IN_320 + PREVIEW_FEATURE),
+        resolver=default_order_resolver,
+        channels=channels_argument,
+    )
+    order_fulfilled = graphene.Field(
+        OrderFulfilled,
+        description=(
+            "Event sent when order is fulfilled." + ADDED_IN_320 + PREVIEW_FEATURE
+        ),
+        resolver=default_order_resolver,
+        channels=channels_argument,
+    )
+    order_cancelled = graphene.Field(
+        OrderCancelled,
+        description=(
+            "Event sent when order is cancelled." + ADDED_IN_320 + PREVIEW_FEATURE
+        ),
+        resolver=default_order_resolver,
+        channels=channels_argument,
+    )
+    order_expired = graphene.Field(
+        OrderExpired,
+        description=(
+            "Event sent when order becomes expired." + ADDED_IN_320 + PREVIEW_FEATURE
+        ),
+        resolver=default_order_resolver,
+        channels=channels_argument,
+    )
+    order_metadata_updated = graphene.Field(
+        OrderMetadataUpdated,
+        description=(
+            "Event sent when order metadata is updated."
+            + ADDED_IN_320
+            + PREVIEW_FEATURE
+        ),
+        resolver=default_order_resolver,
+        channels=channels_argument,
+    )
+    order_bulk_created = graphene.Field(
+        OrderBulkCreated,
+        description=(
+            "Event sent when orders are imported." + ADDED_IN_320 + PREVIEW_FEATURE
+        ),
+        channels=channels_argument,
     )
 
     class Meta:
@@ -2663,6 +2853,26 @@ class Subscription(SubscriptionObjectType):
 
     @staticmethod
     def resolve_event(root, info: ResolveInfo):
+        return Observable.from_([root])
+
+    @staticmethod
+    def resolve_order_bulk_created(root, info: ResolveInfo, channels=None):
+        event_type, orders = root
+        if event_type != WebhookEventAsyncType.ORDER_BULK_CREATED:
+            return Observable.from_([])
+
+        orders_to_return = []
+        if channels:
+            channel_ids = (
+                Channel.objects.using(settings.DATABASE_CONNECTION_REPLICA_NAME)
+                .filter(slug__in=channels)
+                .values_list("id", flat=True)
+            )
+            for order in orders:
+                if order.channel_id in channel_ids:
+                    orders_to_return.append(order)
+            root = (event_type, orders_to_return)
+            return Observable.from_([root])
         return Observable.from_([root])
 
 
@@ -2706,7 +2916,50 @@ class ThumbnailCreated(SubscriptionObjectType):
         return image.url if image else None
 
 
-WEBHOOK_TYPES_MAP = {
+SYNC_WEBHOOK_TYPES_MAP = {
+    WebhookEventSyncType.PAYMENT_AUTHORIZE: PaymentAuthorize,
+    WebhookEventSyncType.PAYMENT_CAPTURE: PaymentCaptureEvent,
+    WebhookEventSyncType.PAYMENT_REFUND: PaymentRefundEvent,
+    WebhookEventSyncType.PAYMENT_VOID: PaymentVoidEvent,
+    WebhookEventSyncType.PAYMENT_CONFIRM: PaymentConfirmEvent,
+    WebhookEventSyncType.PAYMENT_PROCESS: PaymentProcessEvent,
+    WebhookEventSyncType.PAYMENT_LIST_GATEWAYS: PaymentListGateways,
+    WebhookEventSyncType.TRANSACTION_CANCELATION_REQUESTED: (
+        TransactionCancelationRequested
+    ),
+    WebhookEventSyncType.TRANSACTION_CHARGE_REQUESTED: TransactionChargeRequested,
+    WebhookEventSyncType.TRANSACTION_REFUND_REQUESTED: TransactionRefundRequested,
+    WebhookEventSyncType.ORDER_FILTER_SHIPPING_METHODS: OrderFilterShippingMethods,
+    WebhookEventSyncType.CHECKOUT_FILTER_SHIPPING_METHODS: (
+        CheckoutFilterShippingMethods
+    ),
+    WebhookEventSyncType.SHIPPING_LIST_METHODS_FOR_CHECKOUT: (
+        ShippingListMethodsForCheckout
+    ),
+    WebhookEventSyncType.CHECKOUT_CALCULATE_TAXES: CalculateTaxes,
+    WebhookEventSyncType.ORDER_CALCULATE_TAXES: CalculateTaxes,
+    WebhookEventSyncType.PAYMENT_GATEWAY_INITIALIZE_SESSION: (
+        PaymentGatewayInitializeSession
+    ),
+    WebhookEventSyncType.TRANSACTION_INITIALIZE_SESSION: TransactionInitializeSession,
+    WebhookEventSyncType.TRANSACTION_PROCESS_SESSION: TransactionProcessSession,
+    WebhookEventSyncType.LIST_STORED_PAYMENT_METHODS: ListStoredPaymentMethods,
+    WebhookEventSyncType.STORED_PAYMENT_METHOD_DELETE_REQUESTED: (
+        StoredPaymentMethodDeleteRequested
+    ),
+    WebhookEventSyncType.PAYMENT_GATEWAY_INITIALIZE_TOKENIZATION_SESSION: (
+        PaymentGatewayInitializeTokenizationSession
+    ),
+    WebhookEventSyncType.PAYMENT_METHOD_INITIALIZE_TOKENIZATION_SESSION: (
+        PaymentMethodInitializeTokenizationSession
+    ),
+    WebhookEventSyncType.PAYMENT_METHOD_PROCESS_TOKENIZATION_SESSION: (
+        PaymentMethodProcessTokenizationSession
+    ),
+}
+
+
+ASYNC_WEBHOOK_TYPES_MAP = {
     WebhookEventAsyncType.ACCOUNT_CONFIRMATION_REQUESTED: AccountConfirmationRequested,
     WebhookEventAsyncType.ACCOUNT_CHANGE_EMAIL_REQUESTED: AccountChangeEmailRequested,
     WebhookEventAsyncType.ACCOUNT_EMAIL_CHANGED: AccountEmailChanged,
@@ -2827,6 +3080,7 @@ WEBHOOK_TYPES_MAP = {
     WebhookEventAsyncType.SHIPPING_ZONE_UPDATED: ShippingZoneUpdated,
     WebhookEventAsyncType.SHIPPING_ZONE_DELETED: ShippingZoneDeleted,
     WebhookEventAsyncType.SHIPPING_ZONE_METADATA_UPDATED: ShippingZoneMetadataUpdated,
+    WebhookEventAsyncType.SHOP_METADATA_UPDATED: ShopMetadataUpdated,
     WebhookEventAsyncType.STAFF_CREATED: StaffCreated,
     WebhookEventAsyncType.STAFF_UPDATED: StaffUpdated,
     WebhookEventAsyncType.STAFF_DELETED: StaffDeleted,
@@ -2839,6 +3093,8 @@ WEBHOOK_TYPES_MAP = {
     WebhookEventAsyncType.VOUCHER_CREATED: VoucherCreated,
     WebhookEventAsyncType.VOUCHER_UPDATED: VoucherUpdated,
     WebhookEventAsyncType.VOUCHER_DELETED: VoucherDeleted,
+    WebhookEventAsyncType.VOUCHER_CODES_CREATED: VoucherCodesCreated,
+    WebhookEventAsyncType.VOUCHER_CODES_DELETED: VoucherCodesDeleted,
     WebhookEventAsyncType.VOUCHER_METADATA_UPDATED: VoucherMetadataUpdated,
     WebhookEventAsyncType.VOUCHER_CODE_EXPORT_COMPLETED: VoucherCodeExportCompleted,
     WebhookEventAsyncType.WAREHOUSE_CREATED: WarehouseCreated,
@@ -2846,44 +3102,6 @@ WEBHOOK_TYPES_MAP = {
     WebhookEventAsyncType.WAREHOUSE_DELETED: WarehouseDeleted,
     WebhookEventAsyncType.WAREHOUSE_METADATA_UPDATED: WarehouseMetadataUpdated,
     WebhookEventAsyncType.THUMBNAIL_CREATED: ThumbnailCreated,
-    WebhookEventSyncType.PAYMENT_AUTHORIZE: PaymentAuthorize,
-    WebhookEventSyncType.PAYMENT_CAPTURE: PaymentCaptureEvent,
-    WebhookEventSyncType.PAYMENT_REFUND: PaymentRefundEvent,
-    WebhookEventSyncType.PAYMENT_VOID: PaymentVoidEvent,
-    WebhookEventSyncType.PAYMENT_CONFIRM: PaymentConfirmEvent,
-    WebhookEventSyncType.PAYMENT_PROCESS: PaymentProcessEvent,
-    WebhookEventSyncType.PAYMENT_LIST_GATEWAYS: PaymentListGateways,
-    WebhookEventSyncType.TRANSACTION_CANCELATION_REQUESTED: (
-        TransactionCancelationRequested
-    ),
-    WebhookEventSyncType.TRANSACTION_CHARGE_REQUESTED: TransactionChargeRequested,
-    WebhookEventSyncType.TRANSACTION_REFUND_REQUESTED: TransactionRefundRequested,
-    WebhookEventSyncType.ORDER_FILTER_SHIPPING_METHODS: OrderFilterShippingMethods,
-    WebhookEventSyncType.CHECKOUT_FILTER_SHIPPING_METHODS: (
-        CheckoutFilterShippingMethods
-    ),
-    WebhookEventSyncType.SHIPPING_LIST_METHODS_FOR_CHECKOUT: (
-        ShippingListMethodsForCheckout
-    ),
-    WebhookEventSyncType.CHECKOUT_CALCULATE_TAXES: CalculateTaxes,
-    WebhookEventSyncType.ORDER_CALCULATE_TAXES: CalculateTaxes,
-    WebhookEventSyncType.PAYMENT_GATEWAY_INITIALIZE_SESSION: (
-        PaymentGatewayInitializeSession
-    ),
-    WebhookEventSyncType.TRANSACTION_INITIALIZE_SESSION: TransactionInitializeSession,
-    WebhookEventSyncType.TRANSACTION_PROCESS_SESSION: TransactionProcessSession,
-    WebhookEventAsyncType.SHOP_METADATA_UPDATED: ShopMetadataUpdated,
-    WebhookEventSyncType.LIST_STORED_PAYMENT_METHODS: ListStoredPaymentMethods,
-    WebhookEventSyncType.STORED_PAYMENT_METHOD_DELETE_REQUESTED: (
-        StoredPaymentMethodDeleteRequested
-    ),
-    WebhookEventSyncType.PAYMENT_GATEWAY_INITIALIZE_TOKENIZATION_SESSION: (
-        PaymentGatewayInitializeTokenizationSession
-    ),
-    WebhookEventSyncType.PAYMENT_METHOD_INITIALIZE_TOKENIZATION_SESSION: (
-        PaymentMethodInitializeTokenizationSession
-    ),
-    WebhookEventSyncType.PAYMENT_METHOD_PROCESS_TOKENIZATION_SESSION: (
-        PaymentMethodProcessTokenizationSession
-    ),
 }
+
+WEBHOOK_TYPES_MAP = ASYNC_WEBHOOK_TYPES_MAP | SYNC_WEBHOOK_TYPES_MAP

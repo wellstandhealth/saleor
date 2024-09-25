@@ -2,12 +2,16 @@ from functools import partial
 from typing import Union
 
 import graphene
+from prices import Money
 from promise import Promise
 
 from ....checkout import base_calculations
 from ....checkout.models import Checkout, CheckoutLine
 from ....core.prices import quantize_price
-from ....discount import VoucherType
+from ....discount import DiscountType
+from ....discount.utils.checkout import has_checkout_order_promotion
+from ....discount.utils.manual_discount import split_manual_discount
+from ....discount.utils.voucher import is_order_level_voucher
 from ....order.models import Order, OrderLine
 from ....order.utils import get_order_country
 from ....tax.utils import get_charge_taxes
@@ -34,9 +38,10 @@ from ...tax.dataloaders import (
     TaxConfigurationByChannelId,
     TaxConfigurationPerCountryByTaxConfigurationIDLoader,
 )
+from ...tax.enums import TaxableObjectDiscountTypeEnum
 from .. import ResolveInfo
 from .common import NonNullList
-from .money import Money
+from .money import Money as MoneyType
 from .order_or_checkout import OrderOrCheckoutBase
 
 
@@ -74,10 +79,24 @@ class TaxableObjectLine(BaseObjectType):
     product_sku = graphene.String(description="The product sku.")
 
     unit_price = graphene.Field(
-        Money, description="Price of the single item in the order line.", required=True
+        MoneyType,
+        description=(
+            "Price of the single item in the order line. "
+            "The price includes catalogue promotions, specific product "
+            "and applied once per order voucher discounts. "
+            "The price does not include the entire order discount."
+        ),
+        required=True,
     )
     total_price = graphene.Field(
-        Money, description="Price of the order line.", required=True
+        MoneyType,
+        description=(
+            "Price of the order line. "
+            "The price includes catalogue promotions, specific product "
+            "and applied once per order voucher discounts. "
+            "The price does not include the entire order discount."
+        ),
+        required=True,
     )
 
     class Meta:
@@ -198,32 +217,19 @@ class TaxableObjectLine(BaseObjectType):
         if isinstance(root, CheckoutLine):
 
             def with_checkout(checkout):
-                checkout_info = CheckoutInfoByCheckoutTokenLoader(info.context).load(
-                    checkout.token
-                )
                 lines = CheckoutLinesInfoByCheckoutTokenLoader(info.context).load(
                     checkout.token
                 )
 
-                def calculate_line_unit_price(data):
-                    (
-                        checkout_info,
-                        lines,
-                    ) = data
+                def calculate_line_unit_price(lines):
                     for line_info in lines:
                         if line_info.line.pk == root.pk:
                             return base_calculations.calculate_base_line_unit_price(
                                 line_info=line_info,
-                                channel=checkout_info.channel,
                             )
                     return None
 
-                return Promise.all(
-                    [
-                        checkout_info,
-                        lines,
-                    ]
-                ).then(calculate_line_unit_price)
+                return lines.then(calculate_line_unit_price)
 
             return (
                 CheckoutByTokenLoader(info.context)
@@ -237,32 +243,19 @@ class TaxableObjectLine(BaseObjectType):
         if isinstance(root, CheckoutLine):
 
             def with_checkout(checkout):
-                checkout_info = CheckoutInfoByCheckoutTokenLoader(info.context).load(
-                    checkout.token
-                )
                 lines = CheckoutLinesInfoByCheckoutTokenLoader(info.context).load(
                     checkout.token
                 )
 
-                def calculate_line_total_price(data):
-                    (
-                        checkout_info,
-                        lines,
-                    ) = data
+                def calculate_line_total_price(lines):
                     for line_info in lines:
                         if line_info.line.pk == root.pk:
                             return base_calculations.calculate_base_line_total_price(
-                                line_info=line_info,
-                                channel=checkout_info.channel,
+                                line_info=line_info
                             )
                     return None
 
-                return Promise.all(
-                    [
-                        checkout_info,
-                        lines,
-                    ]
-                ).then(calculate_line_total_price)
+                return lines.then(calculate_line_total_price)
 
             return (
                 CheckoutByTokenLoader(info.context)
@@ -275,7 +268,12 @@ class TaxableObjectLine(BaseObjectType):
 class TaxableObjectDiscount(BaseObjectType):
     name = graphene.String(description="The name of the discount.")
     amount = graphene.Field(
-        Money, description="The amount of the discount.", required=True
+        MoneyType, description="The amount of the discount.", required=True
+    )
+    type = TaxableObjectDiscountTypeEnum(
+        required=True,
+        default_value=TaxableObjectDiscountTypeEnum.SUBTOTAL,
+        description="Indicates which part of the order the discount should affect: SUBTOTAL or SHIPPING.",
     )
 
     class Meta:
@@ -294,7 +292,12 @@ class TaxableObject(BaseObjectType):
     )
     currency = graphene.String(required=True, description="The currency of the object.")
     shipping_price = graphene.Field(
-        Money, required=True, description="The price of shipping method."
+        MoneyType,
+        required=True,
+        description=(
+            "The price of shipping method, includes shipping voucher discount "
+            "if applied."
+        ),
     )
     address = graphene.Field(
         "saleor.graphql.account.types.Address",
@@ -368,23 +371,43 @@ class TaxableObject(BaseObjectType):
                 ]
             ).then(calculate_shipping_price)
 
-        return root.base_shipping_price
+        # TODO (SHOPX-875): after adding `undiscounted_base_shipping_price` to
+        # Order model, the `root.base_shipping_price` should be used
+        def shipping_price_with_discount(tax_config):
+            return (
+                root.shipping_price_gross
+                if tax_config.prices_entered_with_tax
+                else root.shipping_price_net
+            )
+
+        return (
+            TaxConfigurationByChannelId(info.context)
+            .load(root.channel_id)
+            .then(shipping_price_with_discount)
+        )
 
     @staticmethod
     def resolve_discounts(root: Union[Checkout, Order], info: ResolveInfo):
         if isinstance(root, Checkout):
 
             def calculate_checkout_discounts(checkout_info):
-                is_shipping_voucher = (
-                    checkout_info.voucher.type == VoucherType.SHIPPING
-                    if checkout_info.voucher
-                    else False
-                )
                 checkout = checkout_info.checkout
                 discount_name = checkout.discount_name
+                # All order level discounts applicable for checkout, like entire order
+                # vouchers and order promotions, reduce subtotal value
                 return (
-                    [{"name": discount_name, "amount": checkout.discount}]
-                    if checkout.discount and not is_shipping_voucher
+                    [
+                        {
+                            "name": discount_name,
+                            "amount": checkout.discount,
+                            "type": TaxableObjectDiscountTypeEnum.SUBTOTAL,
+                        }
+                    ]
+                    if checkout.discount
+                    and (
+                        is_order_level_voucher(checkout_info.voucher)
+                        or has_checkout_order_promotion(checkout_info)
+                    )
                     else []
                 )
 
@@ -395,10 +418,44 @@ class TaxableObject(BaseObjectType):
             )
 
         def map_discounts(discounts):
-            return [
-                {"name": discount.name, "amount": discount.amount}
-                for discount in discounts
-            ]
+            # Only order level discounts, like entire order vouchers,
+            # order promotions and manual discounts should be taken into account.
+            # Manual discount needs to be split into subtotal and shipping portions.
+            taxable_discounts = []
+            currency = root.currency
+            for discount in discounts:
+                shipping_discount = Money(0, currency)
+                subtotal_discount = Money(0, currency)
+                if discount.type == DiscountType.MANUAL:
+                    subtotal = root.subtotal.net
+                    shipping = root.base_shipping_price
+                    subtotal_discount, shipping_discount = split_manual_discount(
+                        discount, subtotal, shipping
+                    )
+                if (
+                    is_order_level_voucher(discount.voucher)
+                    or discount.type == DiscountType.ORDER_PROMOTION
+                ):
+                    subtotal_discount = discount.amount
+
+                if subtotal_discount.amount:
+                    taxable_discounts.append(
+                        {
+                            "name": discount.name,
+                            "amount": subtotal_discount,
+                            "type": TaxableObjectDiscountTypeEnum.SUBTOTAL,
+                        }
+                    )
+                if shipping_discount.amount:
+                    taxable_discounts.append(
+                        {
+                            "name": discount.name,
+                            "amount": shipping_discount,
+                            "type": TaxableObjectDiscountTypeEnum.SHIPPING,
+                        }
+                    )
+
+            return taxable_discounts
 
         return (
             OrderDiscountsByOrderIDLoader(info.context)

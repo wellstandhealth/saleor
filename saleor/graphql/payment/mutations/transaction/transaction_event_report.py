@@ -7,30 +7,36 @@ from django.utils import timezone
 from .....app.models import App
 from .....checkout.actions import transaction_amounts_for_checkout_updated
 from .....core.exceptions import PermissionDenied
+from .....core.prices import quantize_price
 from .....core.tracing import traced_atomic_transaction
 from .....order import models as order_models
 from .....order.actions import order_transaction_updated
 from .....order.fetch import fetch_order_info
 from .....order.search import update_order_search_vector
-from .....order.utils import updates_amounts_for_order
-from .....payment import TransactionEventType
+from .....order.utils import (
+    calculate_order_granted_refund_status,
+    updates_amounts_for_order,
+)
+from .....payment import OPTIONAL_AMOUNT_EVENTS, TransactionEventType
 from .....payment import models as payment_models
 from .....payment.transaction_item_calculations import recalculate_transaction_amounts
 from .....payment.utils import (
     authorization_success_already_exists,
     create_failed_transaction_event,
     get_already_existing_event,
+    get_transaction_event_amount,
 )
 from .....permission.auth_filters import AuthorizationFilters
 from .....permission.enums import PaymentPermissions
 from ....app.dataloaders import get_app_promise
 from ....core import ResolveInfo
-from ....core.descriptions import ADDED_IN_313, PREVIEW_FEATURE
+from ....core.descriptions import ADDED_IN_313, ADDED_IN_314, PREVIEW_FEATURE
 from ....core.doc_category import DOC_CATEGORY_PAYMENTS
 from ....core.enums import TransactionEventReportErrorCode
 from ....core.mutations import ModelMutation
-from ....core.scalars import PositiveDecimal
+from ....core.scalars import UUID, DateTime, PositiveDecimal
 from ....core.types import common as common_types
+from ....core.validators import validate_one_of_args_is_in_mutation
 from ....plugins.dataloaders import get_plugin_manager_promise
 from ...enums import TransactionActionEnum, TransactionEventTypeEnum
 from ...types import TransactionEvent, TransactionItem
@@ -55,8 +61,17 @@ class TransactionEventReport(ModelMutation):
 
     class Arguments:
         id = graphene.ID(
-            description="The ID of the transaction.",
-            required=True,
+            description=(
+                "The ID of the transaction. One of field id or token is required."
+            ),
+            required=False,
+        )
+        token = UUID(
+            description=(
+                "The token of the transaction. One of field id or token is required."
+            )
+            + ADDED_IN_314,
+            required=False,
         )
         psp_reference = graphene.String(
             description="PSP Reference of the event to report.", required=True
@@ -67,9 +82,16 @@ class TransactionEventReport(ModelMutation):
             description="Current status of the event to report.",
         )
         amount = PositiveDecimal(
-            description="The amount of the event to report.", required=True
+            description=(
+                "The amount of the event to report. \n\nRequired for all `REQUEST`, "
+                "`SUCCESS`, `ACTION_REQUIRED`, and `ADJUSTMENT` events. For other events, "
+                "the amount will be calculated based on the previous events with "
+                "the same pspReference. "
+                "If not possible to calculate, the mutation will return an error."
+            ),
+            required=False,
         )
-        time = graphene.DateTime(
+        time = DateTime(
             description=(
                 "The time of the event to report. If not provide, "
                 "the current time will be used."
@@ -126,6 +148,7 @@ class TransactionEventReport(ModelMutation):
             "charge_pending_value",
             "refund_pending_value",
             "cancel_pending_value",
+            "modified_at",
         ]
 
         if (
@@ -155,26 +178,69 @@ class TransactionEventReport(ModelMutation):
         transaction.save(update_fields=fields_to_update)
 
     @classmethod
+    def get_related_granted_refund(
+        cls, event_psp_reference: str, transaction: payment_models.TransactionItem
+    ) -> Optional[order_models.OrderGrantedRefund]:
+        request_refund = (
+            payment_models.TransactionEvent.objects.filter(
+                psp_reference=event_psp_reference,
+                transaction_id=transaction.pk,
+                type=TransactionEventType.REFUND_REQUEST,
+            )
+            .select_related("related_granted_refund")
+            .last()
+        )
+        return request_refund.related_granted_refund if request_refund else None
+
+    @classmethod
+    def clean_amount_value(
+        cls, amount: Optional[float], event_type: str, psp_reference: str, currency: str
+    ):
+        if amount is None:
+            if event_type not in OPTIONAL_AMOUNT_EVENTS:
+                raise ValidationError(
+                    {
+                        "amount": ValidationError(
+                            f"The `amount` field is required for {event_type} event.",
+                            code=TransactionEventReportErrorCode.REQUIRED.value,
+                        )
+                    }
+                )
+            try:
+                amount = get_transaction_event_amount(event_type, psp_reference)
+            except ValueError as error:
+                raise ValidationError(
+                    {
+                        "amount": ValidationError(
+                            str(error),
+                            code=TransactionEventReportErrorCode.REQUIRED.value,
+                        )
+                    },
+                )
+        return quantize_price(amount, currency)
+
+    @classmethod
     def perform_mutation(  # type: ignore[override]
         cls,
         root,
         info: ResolveInfo,
         /,
         *,
-        id,
         psp_reference,
         type,
-        amount,
+        amount=None,
+        token=None,
+        id=None,
         time=None,
         external_url=None,
         message=None,
         available_actions=None,
     ):
+        validate_one_of_args_is_in_mutation("id", id, "token", token)
+        transaction = get_transaction_item(id, token)
         user = info.context.user
         app = get_app_promise(info.context).get()
         manager = get_plugin_manager_promise(info.context).get()
-
-        transaction = get_transaction_item(id)
 
         if not check_if_requestor_has_access(
             transaction=transaction, user=user, app=app
@@ -186,9 +252,18 @@ class TransactionEventReport(ModelMutation):
                 ]
             )
 
+        amount = cls.clean_amount_value(
+            amount, type, psp_reference, transaction.currency
+        )
         app_identifier = None
         if app and app.identifier:
             app_identifier = app.identifier
+
+        related_granted_refund = None
+        if type in TransactionEventType.REFUND_RELATED_EVENT_TYPES:
+            related_granted_refund = cls.get_related_granted_refund(
+                psp_reference, transaction
+            )
 
         transaction_event_data = {
             "psp_reference": psp_reference,
@@ -203,6 +278,7 @@ class TransactionEventReport(ModelMutation):
             "app": app,
             "user": user,
             "include_in_calculations": True,
+            "related_granted_refund": related_granted_refund,
         }
         transaction_event = cls.get_instance(info, **transaction_event_data)
         transaction_event = cast(payment_models.TransactionEvent, transaction_event)
@@ -251,6 +327,8 @@ class TransactionEventReport(ModelMutation):
 
         if error_msg and error_code and error_field:
             create_failed_transaction_event(transaction_event, cause=error_msg)
+            if related_granted_refund:
+                calculate_order_granted_refund_status(related_granted_refund)
             raise ValidationError({error_field: ValidationError(error_msg, error_code)})
         if not already_processed:
             previous_authorized_value = transaction.authorized_value
@@ -287,6 +365,8 @@ class TransactionEventReport(ModelMutation):
                     previous_charged_value=previous_charged_value,
                     previous_refunded_value=previous_refunded_value,
                 )
+                if related_granted_refund:
+                    calculate_order_granted_refund_status(related_granted_refund)
             if transaction.checkout_id:
                 manager = get_plugin_manager_promise(info.context).get()
                 transaction_amounts_for_checkout_updated(transaction, manager)

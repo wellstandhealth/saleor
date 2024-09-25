@@ -16,17 +16,18 @@ from ...utils import create_stocks
 VARIANT_STOCKS_UPDATE_MUTATIONS = """
     mutation ProductVariantStocksUpdate($variantId: ID!, $stocks: [StockInput!]!){
         productVariantStocksUpdate(variantId: $variantId, stocks: $stocks){
-            productVariant{
-                stocks{
+            productVariant {
+                quantityAvailable
+                stocks {
                     quantity
                     quantityAllocated
                     id
-                    warehouse{
+                    warehouse {
                         slug
                     }
                 }
             }
-            errors{
+            errors {
                 code
                 field
                 message
@@ -38,8 +39,12 @@ VARIANT_STOCKS_UPDATE_MUTATIONS = """
 
 
 def test_product_variant_stocks_update(
-    staff_api_client, variant, warehouse, permission_manage_products
+    staff_api_client,
+    preorder_variant_global_threshold,
+    warehouse,
+    permission_manage_products,
 ):
+    variant = preorder_variant_global_threshold
     variant_id = graphene.Node.to_global_id("ProductVariant", variant.pk)
     second_warehouse = Warehouse.objects.get(pk=warehouse.pk)
     second_warehouse.slug = "second warehouse"
@@ -230,7 +235,7 @@ def test_update_or_create_variant_stocks(variant, warehouses):
     ]
 
     ProductVariantStocksUpdate.update_or_create_variant_stocks(
-        variant, stocks_data, warehouses, get_plugins_manager()
+        variant, stocks_data, warehouses, get_plugins_manager(allow_replica=False)
     )
 
     variant.refresh_from_db()
@@ -269,7 +274,7 @@ def test_update_or_create_variant_stocks_when_stock_out_of_quantity(
     stocks_data = [{"quantity": 10, "warehouse": "321"}]
 
     ProductVariantStocksUpdate.update_or_create_variant_stocks(
-        variant, stocks_data, warehouses, get_plugins_manager()
+        variant, stocks_data, warehouses, get_plugins_manager(allow_replica=False)
     )
 
     variant.refresh_from_db()
@@ -291,7 +296,7 @@ def test_update_or_create_variant_stocks_empty_stocks_data(variant, warehouses):
     )
 
     ProductVariantStocksUpdate.update_or_create_variant_stocks(
-        variant, [], warehouses, get_plugins_manager()
+        variant, [], warehouses, get_plugins_manager(allow_replica=False)
     )
 
     variant.refresh_from_db()
@@ -326,7 +331,7 @@ def test_update_or_create_variant_with_back_in_stock_webhooks_only_success(
     )
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    plugins = get_plugins_manager()
+    plugins = get_plugins_manager(allow_replica=False)
     stocks_data = [
         {"quantity": 10, "warehouse": "123"},
     ]
@@ -374,7 +379,7 @@ def test_update_or_create_variant_with_back_in_stock_webhooks_only_failed(
 
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    plugins = get_plugins_manager()
+    plugins = get_plugins_manager(allow_replica=False)
     stocks_data = [
         {"quantity": 0, "warehouse": "123"},
     ]
@@ -422,7 +427,7 @@ def test_update_or_create_variant_with_back_in_stock_webhooks_with_allocations(
     # given
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    plugins = get_plugins_manager()
+    plugins = get_plugins_manager(allow_replica=False)
     stock.quantity_allocated = stock_quantity
     stock.save(update_fields=["quantity_allocated"])
     stocks_data = [
@@ -469,7 +474,7 @@ def test_update_or_create_variant_with_out_of_stock_webhooks_with_allocations(
     # given
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    plugins = get_plugins_manager()
+    plugins = get_plugins_manager(allow_replica=False)
     stock.quantity_allocated = stock_quantity - 1
     stock.save(update_fields=["quantity_allocated"])
     stocks_data = [
@@ -518,7 +523,7 @@ def test_update_or_create_variant_stocks_with_out_of_stock_webhook_only(
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
 
-    plugins = get_plugins_manager()
+    plugins = get_plugins_manager(allow_replica=False)
 
     stocks_data = [
         {"quantity": 0, "warehouse": "123"},

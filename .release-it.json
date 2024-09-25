@@ -5,7 +5,6 @@
     "releaseName": "${version}",
     "assets": ["saleor/graphql/schema.graphql"]
   },
-
   "npm": {
     "publish": false
   },

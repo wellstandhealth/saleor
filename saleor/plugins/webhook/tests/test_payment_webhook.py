@@ -70,7 +70,7 @@ def webhook_data():
 def test_trigger_webhook_sync(mock_request, payment_app):
     data = '{"key": "value"}'
     trigger_webhook_sync(
-        WebhookEventSyncType.PAYMENT_CAPTURE, data, payment_app.webhooks.first()
+        WebhookEventSyncType.PAYMENT_CAPTURE, data, payment_app.webhooks.first(), False
     )
     event_delivery = EventDelivery.objects.first()
     mock_request.assert_called_once_with(event_delivery)
@@ -94,6 +94,7 @@ def test_trigger_webhook_sync_with_subscription(
         WebhookEventSyncType.PAYMENT_CAPTURE,
         data,
         payment_app.webhooks.first(),
+        False,
         payment,
     )
     mock_request.assert_called_once_with(fake_delivery)
@@ -175,7 +176,7 @@ def test_send_webhook_request_sync_request_exception(
 ):
     # given
     event_payload = event_delivery.payload
-    data = event_payload.payload
+    data = event_payload.get_payload()
     webhook = event_delivery.webhook
     domain = Site.objects.get_current().domain
     message = data.encode("utf-8")
@@ -265,7 +266,9 @@ def test_send_webhook_request_with_proper_timeout(mock_post, event_delivery, app
 
 def test_send_webhook_request_sync_invalid_scheme(webhook, app):
     target_url = "gcpubsub://cloud.google.com/projects/saleor/topics/test"
-    event_payload = EventPayload.objects.create(payload="fake_content")
+    event_payload = EventPayload.objects.create_with_payload_file(
+        payload="fake_content"
+    )
     webhook.target_url = target_url
     webhook.save()
     delivery = EventDelivery.objects.create(
@@ -357,7 +360,7 @@ def test_get_payment_gateways_with_transactions_and_app_without_identifier(
 ):
     # given
     app_name = "Payment App 2"
-    app_identifier = None
+    app_identifier = ""
     app = App.objects.create(name=app_name, is_active=True, identifier=app_identifier)
     app.permissions.add(permission_manage_payments)
     webhook = Webhook.objects.create(

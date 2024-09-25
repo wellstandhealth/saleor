@@ -164,6 +164,7 @@ class TransactionSessionData:
     action: TransactionProcessActionData
     payment_gateway_data: PaymentGatewayData
     customer_ip_address: Optional[str]
+    idempotency_key: Optional[str] = None
 
 
 @dataclass
@@ -316,6 +317,7 @@ class AddressData:
     phone: str
     metadata: Optional[dict]
     private_metadata: Optional[dict]
+    validation_skipped: bool = False
 
 
 class StorePaymentMethodEnum(str, Enum):

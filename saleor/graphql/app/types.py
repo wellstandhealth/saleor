@@ -29,11 +29,13 @@ from ..core.descriptions import (
     ADDED_IN_38,
     ADDED_IN_313,
     ADDED_IN_314,
+    ADDED_IN_319,
     DEPRECATED_IN_3X_FIELD,
     PREVIEW_FEATURE,
 )
 from ..core.doc_category import DOC_CATEGORY_APPS
 from ..core.federation import federated_entity, resolve_federation_references
+from ..core.scalars import DateTime
 from ..core.types import (
     BaseObjectType,
     IconThumbnailField,
@@ -492,10 +494,11 @@ class AppToken(BaseObjectType):
 @federated_entity("id")
 class App(ModelObjectType[models.App]):
     id = graphene.GlobalID(required=True, description="The ID of the app.")
-    permissions = NonNullList(Permission, description="List of the app's permissions.")
-    created = graphene.DateTime(
-        description="The date and time when the app was created."
+    identifier = graphene.String(
+        required=False, description="Canonical app ID from the manifest" + ADDED_IN_319
     )
+    permissions = NonNullList(Permission, description="List of the app's permissions.")
+    created = DateTime(description="The date and time when the app was created.")
     is_active = graphene.Boolean(
         description="Determine if app will be set active or not."
     )
@@ -541,7 +544,7 @@ class App(ModelObjectType[models.App]):
     )
     version = graphene.String(description="Version number of the app.")
     access_token = graphene.String(
-        description="JWT token used to authenticate by thridparty app."
+        description="JWT token used to authenticate by third-party app."
     )
     author = graphene.String(
         description=("The App's author name." + ADDED_IN_313 + PREVIEW_FEATURE)

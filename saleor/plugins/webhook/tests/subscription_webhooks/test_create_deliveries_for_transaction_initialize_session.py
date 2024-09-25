@@ -1,4 +1,5 @@
 import json
+import uuid
 from decimal import Decimal
 
 import graphene
@@ -27,6 +28,7 @@ subscription {
       }
       data
       customerIpAddress
+      idempotencyKey
       sourceObject{
         __typename
         ... on Checkout{
@@ -82,6 +84,7 @@ def test_transaction_initialize_session_checkout_with_data(
         message=None,
     )
     action_type = TransactionFlowStrategy.CHARGE
+    idempotency_key = str(uuid.uuid4())
 
     subscribable_object = TransactionSessionData(
         transaction=transaction,
@@ -95,6 +98,7 @@ def test_transaction_initialize_session_checkout_with_data(
         payment_gateway_data=PaymentGatewayData(
             app_identifier=webhook_app.identifier, data=payload_data, error=None
         ),
+        idempotency_key=idempotency_key,
     )
 
     # when
@@ -106,8 +110,8 @@ def test_transaction_initialize_session_checkout_with_data(
 
     checkout_id = graphene.Node.to_global_id("Checkout", checkout.pk)
     assert delivery.payload
-    assert delivery.payload.payload
-    assert json.loads(delivery.payload.payload) == {
+    assert delivery.payload.get_payload()
+    assert json.loads(delivery.payload.get_payload()) == {
         "merchantReference": graphene.Node.to_global_id(
             "TransactionItem", transaction.token
         ),
@@ -116,6 +120,7 @@ def test_transaction_initialize_session_checkout_with_data(
             "currency": "USD",
             "actionType": action_type.upper(),
         },
+        "idempotencyKey": idempotency_key,
         "data": payload_data,
         "customerIpAddress": "127.0.0.1",
         "sourceObject": {
@@ -150,6 +155,7 @@ def test_transaction_initialize_session_checkout_without_data(
         message=None,
     )
     action_type = TransactionFlowStrategy.CHARGE
+    idempotency_key = str(uuid.uuid4())
 
     subscribable_object = TransactionSessionData(
         transaction=transaction,
@@ -163,6 +169,7 @@ def test_transaction_initialize_session_checkout_without_data(
         payment_gateway_data=PaymentGatewayData(
             app_identifier=webhook_app.identifier, data=payload_data, error=None
         ),
+        idempotency_key=idempotency_key,
     )
 
     # when
@@ -173,8 +180,8 @@ def test_transaction_initialize_session_checkout_without_data(
     # then
     checkout_id = graphene.Node.to_global_id("Checkout", checkout.pk)
     assert delivery.payload
-    assert delivery.payload.payload
-    assert json.loads(delivery.payload.payload) == {
+    assert delivery.payload.get_payload()
+    assert json.loads(delivery.payload.get_payload()) == {
         "merchantReference": graphene.Node.to_global_id(
             "TransactionItem", transaction.token
         ),
@@ -185,6 +192,7 @@ def test_transaction_initialize_session_checkout_without_data(
         },
         "data": payload_data,
         "customerIpAddress": "127.0.0.1",
+        "idempotencyKey": idempotency_key,
         "sourceObject": {
             "__typename": "Checkout",
             "id": checkout_id,
@@ -217,6 +225,7 @@ def test_transaction_initialize_session_order_with_data(
         message=None,
     )
     action_type = TransactionFlowStrategy.CHARGE
+    idempotency_key = str(uuid.uuid4())
 
     subscribable_object = TransactionSessionData(
         transaction=transaction,
@@ -230,6 +239,7 @@ def test_transaction_initialize_session_order_with_data(
         payment_gateway_data=PaymentGatewayData(
             app_identifier=webhook_app.identifier, data=payload_data, error=None
         ),
+        idempotency_key=idempotency_key,
     )
 
     # when
@@ -241,8 +251,8 @@ def test_transaction_initialize_session_order_with_data(
 
     order_id = graphene.Node.to_global_id("Order", order.pk)
     assert delivery.payload
-    assert delivery.payload.payload
-    assert json.loads(delivery.payload.payload) == {
+    assert delivery.payload.get_payload()
+    assert json.loads(delivery.payload.get_payload()) == {
         "merchantReference": graphene.Node.to_global_id(
             "TransactionItem", transaction.token
         ),
@@ -251,6 +261,7 @@ def test_transaction_initialize_session_order_with_data(
             "currency": "USD",
             "actionType": action_type.upper(),
         },
+        "idempotencyKey": idempotency_key,
         "data": payload_data,
         "customerIpAddress": "127.0.0.1",
         "sourceObject": {
@@ -284,6 +295,7 @@ def test_transaction_initialize_session_order_without_data(
         message=None,
     )
     action_type = TransactionFlowStrategy.CHARGE
+    idempotency_key = str(uuid.uuid4())
 
     subscribable_object = TransactionSessionData(
         transaction=transaction,
@@ -297,6 +309,7 @@ def test_transaction_initialize_session_order_without_data(
         payment_gateway_data=PaymentGatewayData(
             app_identifier=webhook_app.identifier, data=payload_data, error=None
         ),
+        idempotency_key=idempotency_key,
     )
 
     # when
@@ -307,8 +320,8 @@ def test_transaction_initialize_session_order_without_data(
     # then
     order_id = graphene.Node.to_global_id("Order", order.pk)
     assert delivery.payload
-    assert delivery.payload.payload
-    assert json.loads(delivery.payload.payload) == {
+    assert delivery.payload.get_payload()
+    assert json.loads(delivery.payload.get_payload()) == {
         "merchantReference": graphene.Node.to_global_id(
             "TransactionItem", transaction.token
         ),
@@ -317,6 +330,7 @@ def test_transaction_initialize_session_order_without_data(
             "currency": "USD",
             "actionType": action_type.upper(),
         },
+        "idempotencyKey": idempotency_key,
         "data": payload_data,
         "customerIpAddress": "127.0.0.1",
         "sourceObject": {
@@ -350,6 +364,7 @@ def test_transaction_initialize_session_empty_customer_ip_addess(
         message=None,
     )
     action_type = TransactionFlowStrategy.CHARGE
+    idempotency_key = str(uuid.uuid4())
 
     subscribable_object = TransactionSessionData(
         transaction=transaction,
@@ -363,6 +378,7 @@ def test_transaction_initialize_session_empty_customer_ip_addess(
         payment_gateway_data=PaymentGatewayData(
             app_identifier=webhook_app.identifier, data=payload_data, error=None
         ),
+        idempotency_key=idempotency_key,
     )
 
     # when
@@ -373,8 +389,8 @@ def test_transaction_initialize_session_empty_customer_ip_addess(
     # then
     order_id = graphene.Node.to_global_id("Order", order.pk)
     assert delivery.payload
-    assert delivery.payload.payload
-    assert json.loads(delivery.payload.payload) == {
+    assert delivery.payload.get_payload()
+    assert json.loads(delivery.payload.get_payload()) == {
         "merchantReference": graphene.Node.to_global_id(
             "TransactionItem", transaction.token
         ),
@@ -385,6 +401,7 @@ def test_transaction_initialize_session_empty_customer_ip_addess(
         },
         "data": payload_data,
         "customerIpAddress": None,
+        "idempotencyKey": idempotency_key,
         "sourceObject": {
             "__typename": "Order",
             "id": order_id,

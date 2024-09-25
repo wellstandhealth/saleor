@@ -50,10 +50,10 @@ class Migration(migrations.Migration):
         ),
         migrations.RunSQL(
             sql="""
-                   ALTER TABLE discount_vouchercode
-                   ALTER COLUMN created_at
-                   SET DEFAULT CURRENT_TIMESTAMP;
-               """,
+                ALTER TABLE discount_vouchercode
+                ALTER COLUMN created_at
+                SET DEFAULT CURRENT_TIMESTAMP;
+            """,
             reverse_sql=migrations.RunSQL.noop,
         ),
     ]

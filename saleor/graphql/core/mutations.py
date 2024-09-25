@@ -3,17 +3,11 @@ import secrets
 from collections.abc import Collection, Iterable
 from enum import Enum
 from itertools import chain
-from typing import (
-    Any,
-    Optional,
-    TypeVar,
-    Union,
-    cast,
-    overload,
-)
+from typing import Any, Optional, TypeVar, Union, cast, overload
 from uuid import UUID
 
 import graphene
+from django.conf import settings
 from django.core.exceptions import (
     NON_FIELD_ERRORS,
     ImproperlyConfigured,
@@ -27,6 +21,7 @@ from graphene import ObjectType
 from graphene.types.mutation import MutationOptions
 from graphql.error import GraphQLError
 
+from ...core.db.connection import allow_writer
 from ...core.error_codes import MetadataErrorCode
 from ...core.exceptions import PermissionDenied
 from ...core.utils.events import call_event
@@ -172,6 +167,7 @@ class BaseMutation(graphene.Mutation):
         support_private_meta_field=False,
         auto_webhook_events_message: bool = True,
         webhook_events_info: Optional[list[WebhookEventInfo]] = None,
+        exclude=None,
         **options,
     ):
         if not _meta:
@@ -185,6 +181,9 @@ class BaseMutation(graphene.Mutation):
 
         cls._validate_permissions(permissions)
 
+        if exclude is None:
+            exclude = []
+
         _meta.auto_permission_message = auto_permission_message
         _meta.error_type_class = error_type_class
         _meta.error_type_field = error_type_field
@@ -192,6 +191,7 @@ class BaseMutation(graphene.Mutation):
         _meta.permissions = permissions
         _meta.support_meta_field = support_meta_field
         _meta.support_private_meta_field = support_private_meta_field
+        _meta.exclude = exclude
 
         if permissions and auto_permission_message:
             permissions_msg = message_one_of_permissions_required(permissions)
@@ -281,8 +281,7 @@ class BaseMutation(graphene.Mutation):
         only_type: type[ModelObjectType[MT]],
         qs: Any = None,
         code: str = "not_found",
-    ) -> MT:
-        ...
+    ) -> MT: ...
 
     @overload
     @classmethod
@@ -295,8 +294,7 @@ class BaseMutation(graphene.Mutation):
         only_type: type[ModelObjectType[MT]],
         qs: Any = None,
         code: str = "not_found",
-    ) -> Optional[MT]:
-        ...
+    ) -> Optional[MT]: ...
 
     @overload
     @classmethod
@@ -309,8 +307,7 @@ class BaseMutation(graphene.Mutation):
         only_type: None,
         qs: QuerySet[MT],
         code: str = "not_found",
-    ) -> MT:
-        ...
+    ) -> MT: ...
 
     @overload
     @classmethod
@@ -323,8 +320,7 @@ class BaseMutation(graphene.Mutation):
         only_type: None = None,
         qs: Any = None,
         code: str = "not_found",
-    ) -> Model:
-        ...
+    ) -> Model: ...
 
     @overload
     @classmethod
@@ -337,8 +333,7 @@ class BaseMutation(graphene.Mutation):
         only_type: Any = None,
         qs: Any = None,
         code: str = "not_found",
-    ) -> Optional[Model]:
-        ...
+    ) -> Optional[Model]: ...
 
     @classmethod
     def get_node_or_error(
@@ -404,15 +399,13 @@ class BaseMutation(graphene.Mutation):
     @classmethod
     def get_nodes_or_error(
         cls, ids, field, only_type: type[ModelObjectType[MT]], qs=None, schema=None
-    ) -> list[MT]:
-        ...
+    ) -> list[MT]: ...
 
     @overload
     @classmethod
     def get_nodes_or_error(
         cls, ids, field, only_type: Optional[ObjectType] = None, qs=None, schema=None
-    ) -> list[Model]:
-        ...
+    ) -> list[Model]: ...
 
     @classmethod
     def get_nodes_or_error(cls, ids, field, only_type=None, qs=None, schema=None):
@@ -432,9 +425,9 @@ class BaseMutation(graphene.Mutation):
         """
         for old_field, new_field in field_map.items():
             try:
-                validation_error.error_dict[
-                    new_field
-                ] = validation_error.error_dict.pop(old_field)
+                validation_error.error_dict[new_field] = (
+                    validation_error.error_dict.pop(old_field)
+                )
             except KeyError:
                 pass
 
@@ -518,18 +511,21 @@ class BaseMutation(graphene.Mutation):
         return one_of_permissions_or_auth_filter_required(context, all_permissions)
 
     @classmethod
+    @allow_writer()
     def mutate(cls, root, info: ResolveInfo, **data):
         disallow_replica_in_context(info.context)
         setup_context_user(info.context)
 
         if not cls.check_permissions(info.context, data=data):
             raise PermissionDenied(permissions=cls._meta.permissions)
-        manager = get_plugin_manager_promise(info.context).get()
-        result = manager.perform_mutation(
-            mutation_cls=cls, root=root, info=info, data=data
-        )
-        if result is not None:
-            return result
+
+        if settings.ENABLE_DEPRECATED_MANAGER_PERFORM_MUTATION:
+            manager = get_plugin_manager_promise(info.context).get()
+            result = manager.perform_mutation(
+                mutation_cls=cls, root=root, info=info, data=data
+            )
+            if result is not None:
+                return result
 
         try:
             response = cls.perform_mutation(root, info, **data)
@@ -656,7 +652,6 @@ class ModelMutation(BaseMutation):
         cls,
         arguments=None,
         model=None,
-        exclude=None,
         return_field_name=None,
         object_type=None,
         _meta=None,
@@ -671,9 +666,6 @@ class ModelMutation(BaseMutation):
         if "doc_category" not in options and doc_category_key in DOC_CATEGORY_MAP:
             options["doc_category"] = DOC_CATEGORY_MAP[doc_category_key]
 
-        if exclude is None:
-            exclude = []
-
         if not return_field_name:
             return_field_name = get_model_name(model)
         if arguments is None:
@@ -682,7 +674,6 @@ class ModelMutation(BaseMutation):
         _meta.model = model
         _meta.object_type = object_type
         _meta.return_field_name = return_field_name
-        _meta.exclude = exclude
         super().__init_subclass_with_meta__(_meta=_meta, **options)
 
         model_type = cls.get_type_for_model()
@@ -1050,18 +1041,21 @@ class BaseBulkMutation(BaseMutation):
         return count, errors
 
     @classmethod
+    @allow_writer()
     def mutate(cls, root, info: ResolveInfo, **data):
         disallow_replica_in_context(info.context)
         setup_context_user(info.context)
 
         if not cls.check_permissions(info.context):
             raise PermissionDenied(permissions=cls._meta.permissions)
-        manager = get_plugin_manager_promise(info.context).get()
-        result = manager.perform_mutation(
-            mutation_cls=cls, root=root, info=info, data=data
-        )
-        if result is not None:
-            return result
+
+        if settings.ENABLE_DEPRECATED_MANAGER_PERFORM_MUTATION:
+            manager = get_plugin_manager_promise(info.context).get()
+            result = manager.perform_mutation(
+                mutation_cls=cls, root=root, info=info, data=data
+            )
+            if result is not None:
+                return result
 
         count, errors = cls.perform_mutation(root, info, **data)
         if errors:

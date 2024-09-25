@@ -1,4 +1,5 @@
 import json
+import uuid
 from decimal import Decimal
 from unittest import mock
 
@@ -28,12 +29,18 @@ subscription {
         actionType
       }
       data
+      idempotencyKey
       sourceObject{
         __typename
         ... on Checkout{
           id
         }
         ... on Order{
+          id
+        }
+      }
+      issuingPrincipal {
+        ... on Node {
           id
         }
       }
@@ -53,6 +60,9 @@ def _assert_with_subscription(
     expected_response,
     response,
     mock_request,
+    idempotency_key,
+    requestor=None,
+    requestor_type=None,
 ):
     object_id = graphene.Node.to_global_id(
         source_object.__class__.__name__, source_object.pk
@@ -67,10 +77,16 @@ def _assert_with_subscription(
             "actionType": action_type.upper(),
             "currency": transaction.currency,
         },
+        "idempotencyKey": idempotency_key,
         "sourceObject": {
             "__typename": source_object.__class__.__name__,
             "id": object_id,
         },
+        "issuingPrincipal": (
+            {"id": graphene.Node.to_global_id(requestor_type, requestor.pk)}
+            if requestor
+            else None
+        ),
     }
     _assert_fields(payload, webhook, expected_response, response, mock_request)
 
@@ -105,7 +121,7 @@ def _assert_with_static_payload(
 def _assert_fields(payload, webhook, expected_response, response, mock_request):
     webhook_app = webhook.app
     event_payload = EventPayload.objects.get()
-    assert json.loads(event_payload.payload) == payload
+    assert json.loads(event_payload.get_payload()) == payload
     delivery = EventDelivery.objects.get()
     assert delivery.status == EventDeliveryStatus.PENDING
     assert delivery.event_type == WebhookEventSyncType.TRANSACTION_INITIALIZE_SESSION
@@ -261,14 +277,17 @@ def test_transaction_initialize_checkout_without_request_data(
     webhook_plugin,
     webhook_app,
     checkout,
+    staff_user,
     permission_manage_payments,
     transaction_session_response,
     transaction_item_generator,
 ):
     # given
+
     expected_response_data = transaction_session_response
     mock_request.return_value = expected_response_data
     plugin = webhook_plugin()
+    plugin.requestor = staff_user
 
     webhook_app.identifier = "app.identifier"
     webhook_app.save()
@@ -290,6 +309,7 @@ def test_transaction_initialize_checkout_without_request_data(
         message=None,
     )
     action_type = TransactionFlowStrategy.CHARGE
+    idempotency_key = str(uuid.uuid4())
 
     # when
     response = plugin.transaction_initialize_session(
@@ -305,6 +325,7 @@ def test_transaction_initialize_checkout_without_request_data(
             payment_gateway_data=PaymentGatewayData(
                 app_identifier=webhook_app.identifier, data=None, error=None
             ),
+            idempotency_key=idempotency_key,
         ),
         previous_value=None,
     )
@@ -320,6 +341,85 @@ def test_transaction_initialize_checkout_without_request_data(
         expected_response_data,
         response,
         mock_request,
+        idempotency_key,
+        requestor=staff_user,
+        requestor_type="User",
+    )
+
+
+@freeze_time()
+@mock.patch("saleor.webhook.transport.synchronous.transport.send_webhook_request_sync")
+def test_transaction_initialize_checkout_without_request_data_app_requestor(
+    mock_request,
+    webhook_plugin,
+    webhook_app,
+    checkout,
+    permission_manage_payments,
+    transaction_session_response,
+    transaction_item_generator,
+):
+    # given
+
+    expected_response_data = transaction_session_response
+    mock_request.return_value = expected_response_data
+    plugin = webhook_plugin()
+    plugin.requestor = webhook_app
+
+    webhook_app.identifier = "app.identifier"
+    webhook_app.save()
+    webhook_app.permissions.add(permission_manage_payments)
+    webhook = Webhook.objects.create(
+        name="Webhook",
+        app=webhook_app,
+        subscription_query=TRANSACTION_INITIALIZE_SESSION,
+    )
+    event_type = WebhookEventSyncType.TRANSACTION_INITIALIZE_SESSION
+    webhook.events.create(event_type=event_type)
+    amount = Decimal("10.00")
+
+    transaction = transaction_item_generator(
+        checkout_id=checkout.pk,
+        app=webhook_app,
+        psp_reference=None,
+        name=None,
+        message=None,
+    )
+    action_type = TransactionFlowStrategy.CHARGE
+    idempotency_key = str(uuid.uuid4())
+
+    # when
+    response = plugin.transaction_initialize_session(
+        transaction_session_data=TransactionSessionData(
+            transaction=transaction,
+            source_object=checkout,
+            action=TransactionProcessActionData(
+                amount=amount,
+                currency=transaction.currency,
+                action_type=action_type,
+            ),
+            customer_ip_address="127.0.0.1",
+            payment_gateway_data=PaymentGatewayData(
+                app_identifier=webhook_app.identifier, data=None, error=None
+            ),
+            idempotency_key=idempotency_key,
+        ),
+        previous_value=None,
+    )
+
+    # then
+    _assert_with_subscription(
+        checkout,
+        transaction,
+        None,
+        amount,
+        action_type,
+        webhook,
+        expected_response_data,
+        response,
+        mock_request,
+        idempotency_key,
+        requestor=webhook_app,
+        requestor_type="App",
     )
 
 
@@ -360,6 +460,7 @@ def test_transaction_initialize_checkout_with_request_data(
         message=None,
     )
     action_type = TransactionFlowStrategy.CHARGE
+    idempotency_key = str(uuid.uuid4())
 
     # when
     response = plugin.transaction_initialize_session(
@@ -375,6 +476,7 @@ def test_transaction_initialize_checkout_with_request_data(
             payment_gateway_data=PaymentGatewayData(
                 app_identifier=webhook_app.identifier, data=data, error=None
             ),
+            idempotency_key=idempotency_key,
         ),
         previous_value=None,
     )
@@ -390,6 +492,7 @@ def test_transaction_initialize_checkout_with_request_data(
         expected_response_data,
         response,
         mock_request,
+        idempotency_key,
     )
 
 
@@ -631,6 +734,7 @@ def test_transaction_initialize_order_without_request_data(
         message=None,
     )
     action_type = TransactionFlowStrategy.CHARGE
+    idempotency_key = str(uuid.uuid4())
 
     # when
     response = plugin.transaction_initialize_session(
@@ -646,6 +750,7 @@ def test_transaction_initialize_order_without_request_data(
             payment_gateway_data=PaymentGatewayData(
                 app_identifier=webhook_app.identifier, data=None, error=None
             ),
+            idempotency_key=idempotency_key,
         ),
         previous_value=None,
     )
@@ -661,6 +766,7 @@ def test_transaction_initialize_order_without_request_data(
         expected_response_data,
         response,
         mock_request,
+        idempotency_key,
     )
 
 
@@ -701,6 +807,7 @@ def test_transaction_initialize_order_with_request_data(
         message=None,
     )
     action_type = TransactionFlowStrategy.CHARGE
+    idempotency_key = str(uuid.uuid4())
 
     # when
     response = plugin.transaction_initialize_session(
@@ -716,6 +823,7 @@ def test_transaction_initialize_order_with_request_data(
             payment_gateway_data=PaymentGatewayData(
                 app_identifier=webhook_app.identifier, data=data, error=None
             ),
+            idempotency_key=idempotency_key,
         ),
         previous_value=None,
     )
@@ -731,4 +839,5 @@ def test_transaction_initialize_order_with_request_data(
         expected_response_data,
         response,
         mock_request,
+        idempotency_key,
     )

@@ -1,6 +1,7 @@
 import logging
 from typing import Optional, cast
 
+import stripe
 from django.core.exceptions import ValidationError
 from django.core.handlers.wsgi import WSGIRequest
 from django.db.models import Prefetch
@@ -51,7 +52,7 @@ def handle_webhook(
     request: WSGIRequest, gateway_config: "GatewayConfig", channel_slug: str
 ):
     payload = request.body
-    sig_header = request.META["HTTP_STRIPE_SIGNATURE"]
+    sig_header = request.headers["stripe-signature"]
     api_key = gateway_config.connection_params["secret_api_key"]
     endpoint_secret = gateway_config.connection_params.get("webhook_secret")
 
@@ -71,12 +72,12 @@ def handle_webhook(
     except ValueError as e:
         # Invalid payload
         logger.warning(
-            "Received invalid payload for Stripe webhook", extra={"error": e}
+            "Received invalid payload for Stripe webhook", extra={"error": str(e)}
         )
         return HttpResponse(status=400)
     except SignatureVerificationError as e:
         # Invalid signature
-        logger.warning("Invalid signature for Stripe webhook", extra={"error": e})
+        logger.warning("Invalid signature for Stripe webhook", extra={"error": str(e)})
         return HttpResponse(status=400)
 
     webhook_handlers = {
@@ -183,7 +184,7 @@ def _finalize_checkout(
         payment.refresh_from_db()
         checkout.refresh_from_db()
 
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     lines, unavailable_variant_pks = fetch_checkout_lines(checkout)
     if unavailable_variant_pks:
         payment_refund_or_void(payment, manager, checkout.channel.slug)
@@ -217,7 +218,9 @@ def _finalize_checkout(
             app=None,
         )
     except ValidationError as e:
-        logger.info("Failed to complete checkout %s.", checkout.pk, extra={"error": e})
+        logger.info(
+            "Failed to complete checkout %s.", checkout.pk, extra={"error": str(e)}
+        )
         return None
 
 
@@ -329,7 +332,7 @@ def handle_authorized_payment_intent(
             payment_intent.amount,
             payment_intent.currency,
         )
-        manager = get_plugins_manager()
+        manager = get_plugins_manager(allow_replica=False)
         try_void_or_refund_inactive_payment(payment, transaction, manager)
         return
 
@@ -380,7 +383,9 @@ def handle_failed_payment_intent(
     )
 
     if payment.order:
-        order_voided(payment.order, None, None, payment, get_plugins_manager())
+        order_voided(
+            payment.order, None, None, payment, get_plugins_manager(allow_replica=False)
+        )
 
 
 def handle_processing_payment_intent(
@@ -457,7 +462,9 @@ def handle_successful_payment_intent(
             payment_intent.amount_received,
             payment_intent.currency,
         )
-        try_void_or_refund_inactive_payment(payment, transaction, get_plugins_manager())
+        try_void_or_refund_inactive_payment(
+            payment, transaction, get_plugins_manager(allow_replica=False)
+        )
         return
 
     if payment.order:
@@ -476,7 +483,7 @@ def handle_successful_payment_intent(
                 None,
                 capture_transaction.amount,
                 payment,
-                get_plugins_manager(),
+                get_plugins_manager(allow_replica=False),
             )
         return
 
@@ -492,11 +499,21 @@ def handle_successful_payment_intent(
 
 
 def handle_refund(
-    charge: StripeObject, _gateway_config: "GatewayConfig", channel_slug: str
+    charge: StripeObject, gateway_config: "GatewayConfig", channel_slug: str
 ):
     payment_intent_id = charge.payment_intent
     payment = _get_payment(payment_intent_id)
 
+    # stripe introduced breaking change and in newer version of api
+    # charge object doesn't contain refunds by default
+    if not getattr(charge, "refunds", None):
+        api_key = gateway_config.connection_params["secret_api_key"]
+        charge_with_refunds = stripe.Charge.retrieve(
+            charge.stripe_id,
+            api_key=api_key,
+            expand=["refunds"],
+        )
+        charge.refunds = charge_with_refunds.refunds
     refund = charge.refunds.data[0]
     if not payment:
         logger.warning(
@@ -538,5 +555,5 @@ def handle_refund(
             None,
             refund_transaction.amount,
             payment,
-            get_plugins_manager(),
+            get_plugins_manager(allow_replica=False),
         )

@@ -26,15 +26,15 @@ from ....account.notifications import (
     send_account_confirmation,
 )
 from ....app.models import App
-from ....checkout.fetch import fetch_checkout_lines
+from ....checkout.fetch import fetch_checkout_info, fetch_checkout_lines
 from ....core import EventDeliveryStatus
 from ....core.models import EventDelivery, EventDeliveryAttempt, EventPayload
 from ....core.notification.utils import get_site_context
-from ....core.notify_events import NotifyEventType
+from ....core.notify import NotifyEventType
 from ....core.utils.url import prepare_url
-from ....discount import RewardValueType
+from ....discount import RewardType, RewardValueType
 from ....discount.interface import VariantPromotionRuleInfo
-from ....discount.utils import (
+from ....discount.utils.checkout import (
     create_or_update_discount_objects_from_promotion_for_checkout,
 )
 from ....graphql.discount.utils import convert_migrated_sale_predicate_to_catalogue_info
@@ -74,7 +74,7 @@ third_url = "http://www.example.com/third/"
     ],
 )
 @mock.patch(
-    "saleor.webhook.transport.asynchronous.transport.send_webhook_request_async.delay"
+    "saleor.webhook.transport.asynchronous.transport.send_webhook_request_async.apply_async"
 )
 def test_trigger_webhooks_for_event_calls_expected_events(
     mock_request,
@@ -111,13 +111,17 @@ def test_trigger_webhooks_for_event_calls_expected_events(
         target_url="http://www.example.com/third/"
     )
     third_webhook.events.create(event_type=WebhookEventAsyncType.ANY)
-    event_payload = EventPayload.objects.create()
+    payload = ""
     trigger_webhooks_async(
-        event_payload, event_name, get_webhooks_for_event(event_name)
+        payload,
+        event_name,
+        get_webhooks_for_event(event_name),
+        allow_replica=False,
     )
+
     deliveries_called = {
-        EventDelivery.objects.get(id=delivery_id[0][0])
-        for delivery_id in mock_request.call_args_list
+        EventDelivery.objects.get(id=request.kwargs["kwargs"]["event_delivery_id"])
+        for request in mock_request.call_args_list
     }
     urls_called = {delivery.webhook.target_url for delivery in deliveries_called}
     assert mock_request.call_count == total_webhook_calls
@@ -136,9 +140,8 @@ def test_order_created(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.order_created(order_with_lines)
-
     mocked_webhook_trigger.assert_called_once_with(
         None,
         WebhookEventAsyncType.ORDER_CREATED,
@@ -146,6 +149,8 @@ def test_order_created(
         order_with_lines,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=settings.ORDER_WEBHOOK_EVENTS_CELERY_QUEUE_NAME,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -164,7 +169,7 @@ def test_order_confirmed(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.order_confirmed(order_with_lines)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -174,6 +179,8 @@ def test_order_confirmed(
         order_with_lines,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=settings.ORDER_WEBHOOK_EVENTS_CELERY_QUEUE_NAME,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -192,7 +199,7 @@ def test_draft_order_created(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.draft_order_created(order_with_lines)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -202,6 +209,8 @@ def test_draft_order_created(
         order_with_lines,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=settings.ORDER_WEBHOOK_EVENTS_CELERY_QUEUE_NAME,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -220,7 +229,7 @@ def test_draft_order_deleted(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.draft_order_deleted(order_with_lines)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -230,6 +239,8 @@ def test_draft_order_deleted(
         order_with_lines,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=settings.ORDER_WEBHOOK_EVENTS_CELERY_QUEUE_NAME,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -248,7 +259,7 @@ def test_draft_order_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.draft_order_updated(order_with_lines)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -258,6 +269,8 @@ def test_draft_order_updated(
         order_with_lines,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=settings.ORDER_WEBHOOK_EVENTS_CELERY_QUEUE_NAME,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -276,7 +289,7 @@ def test_customer_created(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.customer_created(customer_user)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -286,6 +299,7 @@ def test_customer_created(
         customer_user,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -304,7 +318,7 @@ def test_customer_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.customer_updated(customer_user)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -314,6 +328,7 @@ def test_customer_updated(
         customer_user,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -332,7 +347,7 @@ def test_customer_metadata_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.customer_metadata_updated(customer_user)
     mocked_webhook_trigger.assert_called_once_with(
         None,
@@ -341,6 +356,8 @@ def test_customer_metadata_updated(
         customer_user,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=None,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -359,7 +376,7 @@ def test_order_fully_paid(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.order_fully_paid(order_with_lines)
     mocked_webhook_trigger.assert_called_once_with(
         None,
@@ -368,6 +385,8 @@ def test_order_fully_paid(
         order_with_lines,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=settings.ORDER_WEBHOOK_EVENTS_CELERY_QUEUE_NAME,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -387,7 +406,7 @@ def test_order_paid(
     # given
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
 
     # when
     manager.order_paid(order_with_lines)
@@ -400,6 +419,8 @@ def test_order_paid(
         order_with_lines,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=settings.ORDER_WEBHOOK_EVENTS_CELERY_QUEUE_NAME,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -419,7 +440,7 @@ def test_order_refunded(
     # given
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
 
     # when
     manager.order_refunded(order_with_lines)
@@ -432,6 +453,8 @@ def test_order_refunded(
         order_with_lines,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=settings.ORDER_WEBHOOK_EVENTS_CELERY_QUEUE_NAME,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -451,7 +474,7 @@ def test_order_fully_refunded(
     # given
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
 
     # when
     manager.order_fully_refunded(order_with_lines)
@@ -464,6 +487,8 @@ def test_order_fully_refunded(
         order_with_lines,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=settings.ORDER_WEBHOOK_EVENTS_CELERY_QUEUE_NAME,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -482,7 +507,7 @@ def test_collection_created(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.collection_created(collection)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -492,6 +517,7 @@ def test_collection_created(
         collection,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -510,7 +536,7 @@ def test_collection_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.collection_updated(collection)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -520,6 +546,7 @@ def test_collection_updated(
         collection,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -538,7 +565,7 @@ def test_collection_deleted(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.collection_deleted(collection)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -548,6 +575,7 @@ def test_collection_deleted(
         collection,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -566,7 +594,7 @@ def test_collection_metadata_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.collection_metadata_updated(collection)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -576,6 +604,8 @@ def test_collection_metadata_updated(
         collection,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=None,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -594,7 +624,7 @@ def test_product_created(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.product_created(product)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -604,6 +634,7 @@ def test_product_created(
         product,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -622,7 +653,7 @@ def test_product_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.product_updated(product)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -632,6 +663,7 @@ def test_product_updated(
         product,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -650,7 +682,7 @@ def test_product_deleted(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
 
     product = product
     variants_id = list(product.variants.all().values_list("id", flat=True))
@@ -676,6 +708,7 @@ def test_product_deleted(
         product,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -694,7 +727,7 @@ def test_product_metadata_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.product_metadata_updated(product)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -704,6 +737,8 @@ def test_product_metadata_updated(
         product,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=None,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -722,7 +757,7 @@ def test_product_variant_created(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.product_variant_created(variant)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -732,6 +767,7 @@ def test_product_variant_created(
         variant,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -750,7 +786,7 @@ def test_product_variant_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.product_variant_updated(variant)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -760,6 +796,7 @@ def test_product_variant_updated(
         variant,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -778,7 +815,7 @@ def test_product_variant_deleted(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.product_variant_deleted(variant)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -788,6 +825,7 @@ def test_product_variant_deleted(
         variant,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -806,7 +844,7 @@ def test_product_variant_metadata_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.product_variant_metadata_updated(variant)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -816,6 +854,8 @@ def test_product_variant_metadata_updated(
         variant,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=None,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -835,7 +875,7 @@ def test_product_variant_out_of_stock(
     variant = variant_with_many_stocks.stocks.first()
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.product_variant_out_of_stock(variant)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -845,7 +885,9 @@ def test_product_variant_out_of_stock(
         variant,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
+    assert callable(mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"])
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
     )
@@ -864,7 +906,7 @@ def test_product_variant_back_in_stock(
     variant = variant_with_many_stocks.stocks.first()
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.product_variant_back_in_stock(variant)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -874,7 +916,40 @@ def test_product_variant_back_in_stock(
         variant,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
+    assert callable(mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"])
+    assert isinstance(
+        mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
+    )
+
+
+@freeze_time("2014-06-28 10:50")
+@mock.patch("saleor.plugins.webhook.plugin.get_webhooks_for_event")
+@mock.patch("saleor.plugins.webhook.plugin.trigger_webhooks_async")
+def test_product_variant_stock_updated(
+    mocked_webhook_trigger,
+    mocked_get_webhooks_for_event,
+    any_webhook,
+    settings,
+    variant_with_many_stocks,
+):
+    variant = variant_with_many_stocks.stocks.first()
+    mocked_get_webhooks_for_event.return_value = [any_webhook]
+    settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
+    manager = get_plugins_manager(allow_replica=False)
+    manager.product_variant_stock_updated(variant)
+
+    mocked_webhook_trigger.assert_called_once_with(
+        None,
+        WebhookEventAsyncType.PRODUCT_VARIANT_STOCK_UPDATED,
+        [any_webhook],
+        variant,
+        None,
+        legacy_data_generator=ANY,
+        allow_replica=False,
+    )
+    assert callable(mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"])
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
     )
@@ -892,7 +967,7 @@ def test_order_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.order_updated(order_with_lines)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -902,6 +977,8 @@ def test_order_updated(
         order_with_lines,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=settings.ORDER_WEBHOOK_EVENTS_CELERY_QUEUE_NAME,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -920,7 +997,7 @@ def test_order_cancelled(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.order_cancelled(order_with_lines)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -930,6 +1007,8 @@ def test_order_cancelled(
         order_with_lines,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=settings.ORDER_WEBHOOK_EVENTS_CELERY_QUEUE_NAME,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -948,7 +1027,7 @@ def test_order_expired(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.order_expired(order_with_lines)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -958,6 +1037,8 @@ def test_order_expired(
         order_with_lines,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=settings.ORDER_WEBHOOK_EVENTS_CELERY_QUEUE_NAME,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -976,7 +1057,7 @@ def test_order_metadata_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.order_metadata_updated(order_with_lines)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -986,6 +1067,8 @@ def test_order_metadata_updated(
         order_with_lines,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=settings.ORDER_WEBHOOK_EVENTS_CELERY_QUEUE_NAME,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1004,7 +1087,7 @@ def test_checkout_created(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.checkout_created(checkout_with_items)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -1014,6 +1097,8 @@ def test_checkout_created(
         checkout_with_items,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=settings.CHECKOUT_WEBHOOK_EVENTS_CELERY_QUEUE_NAME,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1021,17 +1106,19 @@ def test_checkout_created(
 
 
 def test_checkout_payload_includes_promotions(
-    checkout_with_item, promotion_without_rules
+    checkout_with_item, catalogue_promotion_without_rules
 ):
     # given
     checkout = checkout_with_item
     checkout_lines, _ = fetch_checkout_lines(checkout, prefetch_variant_attributes=True)
+    manager = get_plugins_manager(allow_replica=False)
+    checkout_info = fetch_checkout_info(checkout, checkout_lines, manager)
 
     variant = checkout_lines[0].variant
     channel_listing = variant.channel_listings.first()
 
     reward_value = Decimal("5")
-    rule = promotion_without_rules.rules.create(
+    rule = catalogue_promotion_without_rules.rules.create(
         name="Percentage promotion rule",
         catalogue_predicate={
             "productPredicate": {
@@ -1058,13 +1145,15 @@ def test_checkout_payload_includes_promotions(
         VariantPromotionRuleInfo(
             rule=rule,
             variant_listing_promotion_rule=listing_promotion_rule,
-            promotion=promotion_without_rules,
+            promotion=catalogue_promotion_without_rules,
             promotion_translation=None,
             rule_translation=None,
         )
     ]
 
-    create_or_update_discount_objects_from_promotion_for_checkout(checkout_lines)
+    create_or_update_discount_objects_from_promotion_for_checkout(
+        checkout_info, checkout_lines
+    )
 
     variant_price_with_sale = variant.get_price(
         channel_listing=channel_listing,
@@ -1081,6 +1170,59 @@ def test_checkout_payload_includes_promotions(
     assert Decimal(data[0]["lines"][0]["base_price"]) == variant_price_with_sale.amount
 
 
+def test_checkout_payload_includes_order_promotion_discount(
+    checkout_with_item, catalogue_promotion_without_rules
+):
+    # given
+    checkout = checkout_with_item
+    checkout_lines, _ = fetch_checkout_lines(checkout, prefetch_variant_attributes=True)
+    manager = get_plugins_manager(allow_replica=False)
+    checkout_info = fetch_checkout_info(checkout, checkout_lines, manager)
+
+    variant = checkout_lines[0].variant
+    channel_listing = variant.channel_listings.first()
+
+    reward_value = Decimal("5")
+    rule = catalogue_promotion_without_rules.rules.create(
+        name="Fixed promotion rule",
+        order_predicate={
+            "discountedObjectPredicate": {
+                "baseTotalPrice": {
+                    "range": {
+                        "gte": 20,
+                    }
+                }
+            }
+        },
+        reward_value_type=RewardValueType.FIXED,
+        reward_value=reward_value,
+        reward_type=RewardType.SUBTOTAL_DISCOUNT,
+    )
+    rule.channels.add(channel_listing.channel)
+
+    create_or_update_discount_objects_from_promotion_for_checkout(
+        checkout_info, checkout_lines
+    )
+    checkout.save(
+        update_fields=[
+            "discount_amount",
+            "discount_name",
+            "translated_discount_name",
+        ]
+    )
+
+    # when
+    data = json.loads(generate_checkout_payload(checkout))
+
+    # then
+    variant_price = variant.get_price(
+        channel_listing=channel_listing,
+    )
+    assert Decimal(data[0]["discount_amount"]) == reward_value
+    assert data[0]["discount_name"] == checkout.discount_name
+    assert Decimal(data[0]["lines"][0]["base_price"]) == variant_price.amount
+
+
 @freeze_time("1914-06-28 10:50")
 @mock.patch("saleor.plugins.webhook.plugin.get_webhooks_for_event")
 @mock.patch("saleor.plugins.webhook.plugin.trigger_webhooks_async")
@@ -1093,7 +1235,7 @@ def test_checkout_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.checkout_updated(checkout_with_items)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -1103,6 +1245,8 @@ def test_checkout_updated(
         checkout_with_items,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=settings.CHECKOUT_WEBHOOK_EVENTS_CELERY_QUEUE_NAME,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1122,7 +1266,7 @@ def test_checkout_fully_paid(
     # given
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
 
     # when
     manager.checkout_fully_paid(checkout_with_items)
@@ -1135,6 +1279,8 @@ def test_checkout_fully_paid(
         checkout_with_items,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=settings.CHECKOUT_WEBHOOK_EVENTS_CELERY_QUEUE_NAME,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1153,7 +1299,7 @@ def test_checkout_metadata_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.checkout_metadata_updated(checkout_with_items)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -1163,6 +1309,8 @@ def test_checkout_metadata_updated(
         checkout_with_items,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=None,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1177,7 +1325,7 @@ def test_page_created(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.page_created(page)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -1187,6 +1335,7 @@ def test_page_created(
         page,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1201,7 +1350,7 @@ def test_page_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.page_updated(page)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -1211,6 +1360,7 @@ def test_page_updated(
         page,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1225,7 +1375,7 @@ def test_page_deleted(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     page_id = page.id
     page.delete()
     page.id = page_id
@@ -1238,6 +1388,7 @@ def test_page_deleted(
         page,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1256,7 +1407,7 @@ def test_invoice_request(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     invoice = fulfilled_order.invoices.first()
     manager.invoice_request(fulfilled_order, invoice, invoice.number)
 
@@ -1267,6 +1418,7 @@ def test_invoice_request(
         invoice,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1285,7 +1437,7 @@ def test_invoice_delete(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     invoice = fulfilled_order.invoices.first()
     manager.invoice_delete(invoice)
 
@@ -1296,6 +1448,7 @@ def test_invoice_delete(
         invoice,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1314,7 +1467,7 @@ def test_invoice_sent(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     invoice = fulfilled_order.invoices.first()
     manager.invoice_sent(invoice, fulfilled_order.user.email)
 
@@ -1325,6 +1478,7 @@ def test_invoice_sent(
         invoice,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1343,7 +1497,7 @@ def test_fulfillment_metadata_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.fulfillment_metadata_updated(fulfillment)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -1353,6 +1507,8 @@ def test_fulfillment_metadata_updated(
         fulfillment,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=None,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1371,7 +1527,7 @@ def test_gift_card_metadata_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.gift_card_metadata_updated(gift_card)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -1381,6 +1537,8 @@ def test_gift_card_metadata_updated(
         gift_card,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=None,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1399,7 +1557,7 @@ def test_voucher_metadata_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.voucher_metadata_updated(voucher)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -1409,6 +1567,8 @@ def test_voucher_metadata_updated(
         voucher,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=None,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1428,7 +1588,7 @@ def test_shop_metadata_updated(
     assert site_settings
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.shop_metadata_updated(site_settings)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -1438,6 +1598,8 @@ def test_shop_metadata_updated(
         site_settings,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=None,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1456,7 +1618,7 @@ def test_shipping_zone_metadata_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.shipping_zone_metadata_updated(shipping_zone)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -1466,6 +1628,8 @@ def test_shipping_zone_metadata_updated(
         shipping_zone,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=None,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1484,7 +1648,7 @@ def test_warehouse_metadata_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.warehouse_metadata_updated(warehouse)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -1494,6 +1658,8 @@ def test_warehouse_metadata_updated(
         warehouse,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=None,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1512,7 +1678,7 @@ def test_transaction_item_metadata_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     manager.transaction_item_metadata_updated(transaction_item_created_by_app)
 
     mocked_webhook_trigger.assert_called_once_with(
@@ -1522,6 +1688,8 @@ def test_transaction_item_metadata_updated(
         transaction_item_created_by_app,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
+        queue=None,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1541,7 +1709,7 @@ def test_notify_user(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager(lambda: customer_user)
+    manager = get_plugins_manager(True, lambda: customer_user)
     timestamp = timezone.make_aware(
         datetime.strptime("2020-03-18 12:00", "%Y-%m-%d %H:%M"), timezone.utc
     ).isoformat()
@@ -1574,7 +1742,10 @@ def test_notify_user(
         },
     }
     mocked_webhook_trigger.assert_called_once_with(
-        json.dumps(data), WebhookEventAsyncType.NOTIFY_USER, [any_webhook]
+        json.dumps(data),
+        WebhookEventAsyncType.NOTIFY_USER,
+        [any_webhook],
+        allow_replica=True,
     )
 
 
@@ -1599,13 +1770,16 @@ def test_create_event_payload_reference_with_error(
     webhook.target_url = "testy"
     webhook.save()
     expected_data = serialize("json", [order_with_lines])
-    event_payload = EventPayload.objects.create(payload=expected_data)
     trigger_webhooks_async(
-        event_payload, WebhookEventAsyncType.ORDER_CREATED, [webhook]
+        expected_data,
+        WebhookEventAsyncType.ORDER_CREATED,
+        [webhook],
+        allow_replica=False,
     )
     delivery = EventDelivery.objects.first()
     send_webhook_request_async(delivery.id)
     attempt = EventDeliveryAttempt.objects.first()
+    payload = EventPayload.objects.first()
 
     assert delivery
     assert attempt
@@ -1615,6 +1789,8 @@ def test_create_event_payload_reference_with_error(
     assert delivery.status == "failed"
     assert attempt.task_id == ANY
     assert attempt.duration == ANY
+    assert payload.get_payload() == expected_data
+    assert payload.payload_file
 
 
 @freeze_time("1914-06-28 10:50")
@@ -1629,7 +1805,7 @@ def test_sale_created(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
 
     promotion = promotion_converted_from_sale
     predicate = promotion.rules.first().catalogue_predicate
@@ -1645,6 +1821,7 @@ def test_sale_created(
         promotion,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1664,7 +1841,7 @@ def test_sale_updated(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
 
     promotion = promotion_converted_from_sale
     rule = promotion.rules.first()
@@ -1691,6 +1868,7 @@ def test_sale_updated(
         promotion,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1709,7 +1887,7 @@ def test_sale_deleted(
 ):
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
 
     promotion = promotion_converted_from_sale
     predicate = promotion.rules.first().catalogue_predicate
@@ -1723,6 +1901,7 @@ def test_sale_deleted(
         promotion,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1742,7 +1921,7 @@ def test_sale_toggle(
     # given
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
 
     promotion = promotion_converted_from_sale
     predicate = promotion.rules.first().catalogue_predicate
@@ -1759,6 +1938,7 @@ def test_sale_toggle(
         promotion,
         None,
         legacy_data_generator=ANY,
+        allow_replica=False,
     )
     assert isinstance(
         mocked_webhook_trigger.call_args.kwargs["legacy_data_generator"], partial
@@ -1769,7 +1949,7 @@ def test_sale_toggle(
 def test_event_delivery_retry(mocked_webhook_send, event_delivery, settings):
     # given
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
 
     # when
     manager.event_delivery_retry(event_delivery)
@@ -1800,7 +1980,7 @@ def test_send_webhook_request_async(
         "mirumee.com",
         event_delivery.webhook.secret_key,
         event_delivery.event_type,
-        event_delivery.payload.payload,
+        event_delivery.payload.get_payload(),
         event_delivery.webhook.custom_headers,
     )
     mocked_clear_delivery.assert_called_once_with(event_delivery)
@@ -1878,7 +2058,7 @@ def test_transaction_charge_requested(
 
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     transaction = TransactionItem.objects.create(
         name="Credit card",
         psp_reference="PSP ref",
@@ -1930,7 +2110,7 @@ def test_transaction_refund_requested(
 
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     transaction = TransactionItem.objects.create(
         name="Credit card",
         psp_reference="PSP ref",
@@ -1969,6 +2149,112 @@ def test_transaction_refund_requested(
 @freeze_time("1914-06-28 10:50")
 @mock.patch("saleor.plugins.webhook.plugin.get_webhooks_for_event")
 @mock.patch("saleor.plugins.webhook.plugin.trigger_transaction_request")
+def test_transaction_refund_requested_missing_app_owner_updated_refundable_for_checkout(
+    mocked_webhook_trigger,
+    mocked_get_webhooks_for_event,
+    any_webhook,
+    settings,
+    checkout,
+    channel_USD,
+    app,
+):
+    # given
+    checkout.automatically_refundable = True
+    checkout.save()
+    any_webhook.app = app
+    any_webhook.save()
+
+    mocked_get_webhooks_for_event.return_value = [any_webhook]
+    settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
+    manager = get_plugins_manager(allow_replica=False)
+    transaction = TransactionItem.objects.create(
+        name="Credit card",
+        psp_reference="PSP ref",
+        available_actions=[
+            "refund",
+        ],
+        currency="USD",
+        checkout_id=checkout.pk,
+        authorized_value=Decimal("10"),
+        app_identifier=app.identifier,
+        app=app,
+    )
+    event = transaction.events.create(type=TransactionEventType.REFUND_REQUEST)
+    action_value = Decimal("5.00")
+    transaction_action_data = TransactionActionData(
+        transaction=transaction,
+        action_type=TransactionAction.REFUND,
+        action_value=action_value,
+        event=event,
+        transaction_app_owner=None,
+    )
+
+    # when
+    manager.transaction_refund_requested(
+        transaction_action_data, channel_slug=channel_USD.slug
+    )
+
+    # then
+    checkout.refresh_from_db()
+    assert checkout.automatically_refundable is False
+
+
+@freeze_time("1914-06-28 10:50")
+@mock.patch("saleor.plugins.webhook.plugin.get_webhooks_for_event")
+@mock.patch("saleor.plugins.webhook.plugin.trigger_transaction_request")
+def test_transaction_cancel_requested_missing_app_owner_updated_refundable_for_checkout(
+    mocked_webhook_trigger,
+    mocked_get_webhooks_for_event,
+    any_webhook,
+    settings,
+    checkout,
+    channel_USD,
+    app,
+):
+    # given
+    checkout.automatically_refundable = True
+    checkout.save()
+    any_webhook.app = app
+    any_webhook.save()
+
+    mocked_get_webhooks_for_event.return_value = [any_webhook]
+    settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
+    manager = get_plugins_manager(allow_replica=False)
+    transaction = TransactionItem.objects.create(
+        name="Credit card",
+        psp_reference="PSP ref",
+        available_actions=[
+            "refund",
+        ],
+        currency="USD",
+        checkout_id=checkout.pk,
+        authorized_value=Decimal("10"),
+        app_identifier=app.identifier,
+        app=app,
+    )
+    event = transaction.events.create(type=TransactionEventType.CANCEL_REQUEST)
+    action_value = Decimal("5.00")
+    transaction_action_data = TransactionActionData(
+        transaction=transaction,
+        action_type=TransactionAction.CANCEL,
+        action_value=action_value,
+        event=event,
+        transaction_app_owner=None,
+    )
+
+    # when
+    manager.transaction_refund_requested(
+        transaction_action_data, channel_slug=channel_USD.slug
+    )
+
+    # then
+    checkout.refresh_from_db()
+    assert checkout.automatically_refundable is False
+
+
+@freeze_time("1914-06-28 10:50")
+@mock.patch("saleor.plugins.webhook.plugin.get_webhooks_for_event")
+@mock.patch("saleor.plugins.webhook.plugin.trigger_transaction_request")
 def test_transaction_cancelation_requested(
     mocked_webhook_trigger,
     mocked_get_webhooks_for_event,
@@ -1984,7 +2270,7 @@ def test_transaction_cancelation_requested(
 
     mocked_get_webhooks_for_event.return_value = [any_webhook]
     settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
     transaction = TransactionItem.objects.create(
         name="Credit card",
         psp_reference="PSP ref",
@@ -2011,7 +2297,6 @@ def test_transaction_cancelation_requested(
     manager.transaction_cancelation_requested(
         transaction_action_data, channel_slug=channel_USD.slug
     )
-
     # then
     mocked_webhook_trigger.assert_called_once_with(
         transaction_action_data,
@@ -2054,7 +2339,7 @@ def test_send_webhook_request_async_with_request_exception(
 ):
     # given
     event_payload = event_delivery.payload
-    data = event_payload.payload
+    data = event_payload.get_payload()
     webhook = event_delivery.webhook
     domain = Site.objects.get_current().domain
     message = data.encode("utf-8")
@@ -2112,7 +2397,7 @@ def test_is_event_active(settings, webhook, permission_manage_orders):
     webhook.app.permissions.add(permission_manage_orders)
     webhook.events.create(event_type=WebhookEventAsyncType.INVOICE_REQUESTED)
 
-    manager = get_plugins_manager()
+    manager = get_plugins_manager(allow_replica=False)
 
     # when
     is_active = manager.is_event_active_for_any_plugin(event)

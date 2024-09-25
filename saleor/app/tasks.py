@@ -9,6 +9,7 @@ from requests import HTTPError, RequestException
 from .. import celeryconf
 from ..core import JobStatus
 from ..core.models import EventDelivery, EventDeliveryAttempt, EventPayload
+from ..core.tasks import delete_files_from_private_storage_task
 from ..webhook.models import Webhook
 from .installation_utils import AppInstallationError, install_app
 from .models import App, AppExtension, AppInstallation, AppToken
@@ -18,7 +19,13 @@ logger = logging.getLogger(__name__)
 
 @celeryconf.app.task
 def install_app_task(job_id, activate=False):
-    app_installation = AppInstallation.objects.get(id=job_id)
+    try:
+        app_installation = AppInstallation.objects.get(id=job_id)
+    except AppInstallation.DoesNotExist:
+        logger.warning(
+            "Failed to install app. AppInstallation not found for job_id: %s.", job_id
+        )
+        return
     try:
         app, _ = install_app(app_installation, activate=activate)
         app_installation.delete()
@@ -64,6 +71,14 @@ def _raw_remove_deliveries(deliveries_ids):
     attempts = EventDeliveryAttempt.objects.filter(
         Exists(deliveries.filter(id=OuterRef("delivery_id")))
     )
+
+    files_to_delete = [
+        event_payload.payload_file.name
+        for event_payload in payloads.using(settings.DATABASE_CONNECTION_REPLICA_NAME)
+        if event_payload.payload_file
+    ]
+    delete_files_from_private_storage_task.delay(files_to_delete)
+
     attempts._raw_delete(attempts.db)  # type: ignore[attr-defined] # raw access # noqa: E501
     deliveries._raw_delete(deliveries.db)  # type: ignore[attr-defined] # raw access # noqa: E501
     payloads._raw_delete(payloads.db)  # type: ignore[attr-defined] # raw access # noqa: E501
@@ -82,7 +97,7 @@ def remove_apps_task():
         # Saleor uses batch size here to prevent timeouts on database.
         # Batch size determines how many deliveries will be removed,
         # each delivery contains attempts and payloads.
-        batch_size = 10000
+        batch_size = 1000
         last_id = 0
         while True:
             deliveries_ids = list(

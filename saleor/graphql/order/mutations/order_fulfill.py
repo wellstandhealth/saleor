@@ -239,7 +239,10 @@ class OrderFulfill(BaseMutation):
         lines_ids = [line["order_line_id"] for line in lines]
         cls.check_lines_for_duplicates(lines_ids)
         order_lines = cls.get_nodes_or_error(
-            lines_ids, field="lines", only_type=OrderLine
+            lines_ids,
+            field="lines",
+            only_type=OrderLine,
+            qs=order_models.OrderLine.objects.select_related("variant"),
         )
 
         cls.clean_lines(order_lines, quantities_for_lines)
@@ -249,9 +252,9 @@ class OrderFulfill(BaseMutation):
 
         cls.check_total_quantity_of_items(quantities_for_lines)
 
-        lines_for_warehouses: defaultdict[
-            UUID, list[OrderFulfillmentLineInfo]
-        ] = defaultdict(list)
+        lines_for_warehouses: defaultdict[UUID, list[OrderFulfillmentLineInfo]] = (
+            defaultdict(list)
+        )
         for line, order_line in zip(lines, order_lines):
             for stock in line["stocks"]:
                 if stock["quantity"] > 0:
@@ -277,7 +280,6 @@ class OrderFulfill(BaseMutation):
             order,
             field="order",
             only_type=Order,
-            qs=order_models.Order.objects.prefetch_related("lines__variant"),
         )
         if not instance:
             # FIXME: order ID is optional but the code below will not work
