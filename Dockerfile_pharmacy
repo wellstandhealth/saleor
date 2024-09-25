@@ -20,7 +20,7 @@ COPY poetry.lock /app/
 
 RUN pip install poetry==1.7.0
 RUN pip install wheel
-RUN pip install keyrings.google-artifactregistry-authp
+RUN pip install keyrings.google-artifactregistry-auth
 
 WORKDIR /app
 
