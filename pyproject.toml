@@ -85,9 +85,8 @@ documentation = "https://docs.saleor.io/"
   weasyprint = ">=53.0"
   setuptools = "^70.1.0"
 
-    [tool.poetry.dependencies.psycopg2]
-    version = "^2.9.9"
-    extras = [ "binary" ]
+    [tool.poetry.dependencies.psycopg2-binary]
+    version = "^2.8.3"
 
     [tool.poetry.dependencies.django]
     version = "^4.2"
