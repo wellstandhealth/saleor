@@ -161,16 +161,6 @@ extend_exclude = [ "conftest\\.py", ".*/conftest\\.py", ".*/tests/.*" ]
   pillow = "PIL"
   python-magic-bin = "magic"
 
-  [tool.deptry.per_rule_ignores]
-  DEP001 = [ "pkg_resources" ]
-  DEP002 = [
-  "azure-common",
-  "azure-storage-blob",
-  "azure-storage-common",
-  "gunicorn",
-  "psycopg"
-]
-  DEP004 = [ "debug_toolbar", "graphiql_debug_toolbar" ]
 [tool.deptry.per_rule_ignores]
 DEP001 = [ "pkg_resources" ]
 DEP002 = [
