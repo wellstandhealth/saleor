@@ -85,6 +85,7 @@ documentation = "https://docs.saleor.io/"
   weasyprint = ">=53.0"
   setuptools = "^70.1.0"
 
+  django-allow-cidr = "^0.6.0"
   google-cloud-secret-manager = ">=2.13.0,<3.0.0"
 
     [tool.poetry.dependencies.psycopg2-binary]
