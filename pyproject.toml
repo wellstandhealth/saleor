@@ -42,7 +42,7 @@ documentation = "https://docs.saleor.io/"
   draftjs-sanitizer = "^1.0.0"
   faker = ">=4.1,<24.0"
   google-cloud-pubsub = ">=1.7,<3.0"
-  google-cloud-storage = "^2.0.0"
+  google-cloud-storage = "^2.10.0"
   google-i18n-address = "^3.1.0"
   graphene = "<3.0"
   graphql-core = "^2.3.2"
@@ -84,6 +84,8 @@ documentation = "https://docs.saleor.io/"
   urllib3 = "^1.26.19"
   weasyprint = ">=53.0"
   setuptools = "^70.1.0"
+
+  google-cloud-secret-manager = ">=2.13.0,<3.0.0"
 
     [tool.poetry.dependencies.psycopg2-binary]
     version = "^2.9.9"
