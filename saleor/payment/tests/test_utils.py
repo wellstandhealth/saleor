@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
 from unittest.mock import patch
@@ -7,6 +8,7 @@ import pytz
 from django.utils import timezone
 from freezegun import freeze_time
 
+from ...checkout import CheckoutAuthorizeStatus
 from ...checkout.fetch import fetch_checkout_info, fetch_checkout_lines
 from ...order import OrderAuthorizeStatus, OrderChargeStatus, OrderGrantedRefundStatus
 from ...plugins.manager import get_plugins_manager
@@ -25,6 +27,7 @@ from ..utils import (
     create_payment_lines_information,
     create_transaction_event_for_transaction_session,
     create_transaction_event_from_request_and_webhook_response,
+    deduplicate_event,
     get_channel_slug_from_payment,
     get_correct_event_types_based_on_request_type,
     get_transaction_event_amount,
@@ -478,6 +481,7 @@ def test_create_transaction_event_from_request_and_webhook_response_with_psp_ref
     # then
     request_event.refresh_from_db()
     assert request_event.psp_reference == expected_psp_reference
+    assert request_event.include_in_calculations is True
     assert TransactionEvent.objects.count() == 1
 
 
@@ -525,6 +529,7 @@ def test_create_transaction_event_from_request_and_webhook_response_with_no_psp_
     request_event.refresh_from_db()
     transaction.refresh_from_db()
     assert request_event.psp_reference is None
+    assert request_event.include_in_calculations is False
     assert transaction.events.count() == event_count + 1
     assert event.psp_reference is None
     assert event.type == result_event_type
@@ -557,6 +562,7 @@ def test_create_transaction_event_from_request_and_webhook_response_with_no_psp_
     result_event_type,
     transaction_item_generator,
     app,
+    caplog,
 ):
     # given
     transaction = transaction_item_generator()
@@ -582,12 +588,14 @@ def test_create_transaction_event_from_request_and_webhook_response_with_no_psp_
     request_event.refresh_from_db()
     transaction.refresh_from_db()
     assert request_event.psp_reference is None
+    assert request_event.include_in_calculations is False
     assert transaction.events.count() == event_count + 1
     assert event.psp_reference is None
     assert event.transaction_id == transaction.id
-    assert event.message == (
-        f"Providing `pspReference` is required for {result_event_type.upper()}."
-    )
+    error_msg = f"Providing `pspReference` is required for {result_event_type.upper()}."
+    assert event.message == error_msg
+    assert caplog.records[0].levelno == logging.WARNING
+    assert caplog.records[0].message == error_msg
 
 
 @freeze_time("2018-05-31 12:00:01")
@@ -620,6 +628,7 @@ def test_create_transaction_event_from_request_and_webhook_response_part_event(
     assert TransactionEvent.objects.count() == 2
     request_event.refresh_from_db()
     assert request_event.psp_reference == expected_psp_reference
+    assert request_event.include_in_calculations is True
     assert event
     assert event.psp_reference == expected_psp_reference
     assert event.amount_value == amount
@@ -978,6 +987,7 @@ def test_create_transaction_event_from_request_and_webhook_response_full_event(
     assert transaction.events.count() == 2
     request_event.refresh_from_db()
     assert request_event.psp_reference == expected_psp_reference
+    assert request_event.include_in_calculations is True
     assert event
     assert event.psp_reference == expected_psp_reference
     assert event.amount_value == event_amount
@@ -985,6 +995,203 @@ def test_create_transaction_event_from_request_and_webhook_response_full_event(
     assert event.external_url == event_url
     assert event.message == event_cause
     assert event.type == event_type
+
+
+@patch("saleor.checkout.tasks.automatic_checkout_completion_task.delay")
+@patch("saleor.plugins.manager.PluginsManager.checkout_fully_paid")
+def test_create_transaction_event_from_request_when_paid(
+    mocked_checkout_fully_paid,
+    mocked_automatic_checkout_completion_task,
+    transaction_item_generator,
+    app,
+    checkout_with_prices,
+):
+    # given
+    checkout = checkout_with_prices
+
+    transaction = transaction_item_generator(checkout_id=checkout.pk)
+    request_event = TransactionEvent.objects.create(
+        type=TransactionEventType.CHARGE_REQUEST,
+        amount_value=checkout.total.gross.amount,
+        currency="USD",
+        transaction_id=transaction.id,
+    )
+
+    event_amount = checkout.total.gross.amount
+    event_type = TransactionEventType.CHARGE_SUCCESS
+
+    expected_psp_reference = "psp:122:222"
+
+    response_data = {
+        "pspReference": expected_psp_reference,
+        "amount": event_amount,
+        "result": event_type.upper(),
+    }
+
+    # when
+    create_transaction_event_from_request_and_webhook_response(
+        request_event, app, response_data
+    )
+
+    # then
+    flush_post_commit_hooks()
+    checkout.refresh_from_db()
+    assert checkout.authorize_status == CheckoutAuthorizeStatus.FULL
+    mocked_checkout_fully_paid.assert_called_once_with(checkout, webhooks=set())
+    mocked_automatic_checkout_completion_task.assert_not_called()
+
+
+@patch("saleor.checkout.tasks.automatic_checkout_completion_task.delay")
+@patch("saleor.plugins.manager.PluginsManager.checkout_fully_paid")
+def test_create_transaction_event_from_request_when_authorized(
+    mocked_checkout_fully_paid,
+    mocked_automatic_checkout_completion_task,
+    transaction_item_generator,
+    app,
+    checkout_with_prices,
+):
+    # given
+    checkout = checkout_with_prices
+
+    channel = checkout.channel
+    assert channel.automatically_complete_fully_paid_checkouts is False
+
+    transaction = transaction_item_generator(checkout_id=checkout.pk)
+    request_event = TransactionEvent.objects.create(
+        type=TransactionEventType.AUTHORIZATION_REQUEST,
+        amount_value=checkout.total.gross.amount,
+        currency="USD",
+        transaction_id=transaction.id,
+    )
+
+    event_amount = checkout.total.gross.amount
+    event_type = TransactionEventType.AUTHORIZATION_SUCCESS
+
+    expected_psp_reference = "psp:122:222"
+
+    response_data = {
+        "pspReference": expected_psp_reference,
+        "amount": event_amount,
+        "result": event_type.upper(),
+    }
+
+    # when
+    create_transaction_event_from_request_and_webhook_response(
+        request_event, app, response_data
+    )
+
+    # then
+    flush_post_commit_hooks()
+    checkout.refresh_from_db()
+    assert checkout.authorize_status == CheckoutAuthorizeStatus.FULL
+    mocked_checkout_fully_paid.assert_not_called()
+    mocked_automatic_checkout_completion_task.assert_not_called()
+
+
+@patch("saleor.checkout.tasks.automatic_checkout_completion_task.delay")
+@patch("saleor.plugins.manager.PluginsManager.checkout_fully_paid")
+def test_create_transaction_event_from_request_when_paid_triggers_checkout_completion(
+    mocked_checkout_fully_paid,
+    mocked_automatic_checkout_completion_task,
+    transaction_item_generator,
+    app,
+    checkout_with_prices,
+    plugins_manager,
+):
+    # given
+    checkout = checkout_with_prices
+    lines, _ = fetch_checkout_lines(checkout)
+    checkout_info = fetch_checkout_info(checkout, lines, plugins_manager)
+
+    channel = checkout_info.channel
+    channel.automatically_complete_fully_paid_checkouts = True
+    channel.save(update_fields=["automatically_complete_fully_paid_checkouts"])
+
+    transaction = transaction_item_generator(checkout_id=checkout.pk)
+    request_event = TransactionEvent.objects.create(
+        type=TransactionEventType.CHARGE_REQUEST,
+        amount_value=checkout.total.gross.amount,
+        currency="USD",
+        transaction_id=transaction.id,
+    )
+
+    event_amount = checkout.total.gross.amount
+    event_type = TransactionEventType.CHARGE_SUCCESS
+
+    expected_psp_reference = "psp:122:222"
+
+    response_data = {
+        "pspReference": expected_psp_reference,
+        "amount": event_amount,
+        "result": event_type.upper(),
+    }
+
+    # when
+    create_transaction_event_from_request_and_webhook_response(
+        request_event, app, response_data
+    )
+
+    # then
+    flush_post_commit_hooks()
+    checkout.refresh_from_db()
+    assert checkout.authorize_status == CheckoutAuthorizeStatus.FULL
+    mocked_checkout_fully_paid.assert_called_once_with(checkout, webhooks=set())
+    mocked_automatic_checkout_completion_task.assert_called_once_with(
+        checkout.pk, None, app.id
+    )
+
+
+@patch("saleor.checkout.tasks.automatic_checkout_completion_task.delay")
+@patch("saleor.plugins.manager.PluginsManager.checkout_fully_paid")
+def test_create_transaction_event_from_request_when_authorized_triggers_checkout_completion(
+    mocked_checkout_fully_paid,
+    mocked_automatic_checkout_completion_task,
+    transaction_item_generator,
+    app,
+    checkout_with_prices,
+    plugins_manager,
+):
+    # given
+    checkout = checkout_with_prices
+    lines, _ = fetch_checkout_lines(checkout)
+    checkout_info = fetch_checkout_info(checkout, lines, plugins_manager)
+
+    channel = checkout_info.channel
+    channel.automatically_complete_fully_paid_checkouts = True
+    channel.save(update_fields=["automatically_complete_fully_paid_checkouts"])
+
+    transaction = transaction_item_generator(checkout_id=checkout.pk)
+    request_event = TransactionEvent.objects.create(
+        type=TransactionEventType.AUTHORIZATION_REQUEST,
+        amount_value=checkout.total.gross.amount,
+        currency="USD",
+        transaction_id=transaction.id,
+    )
+
+    event_amount = checkout.total.gross.amount
+    event_type = TransactionEventType.AUTHORIZATION_SUCCESS
+
+    expected_psp_reference = "psp:122:222"
+
+    response_data = {
+        "pspReference": expected_psp_reference,
+        "amount": event_amount,
+        "result": event_type.upper(),
+    }
+
+    # when
+    create_transaction_event_from_request_and_webhook_response(
+        request_event, app, response_data
+    )
+
+    # then
+    flush_post_commit_hooks()
+    checkout.refresh_from_db()
+    assert checkout.authorize_status == CheckoutAuthorizeStatus.FULL
+    mocked_checkout_fully_paid.assert_not_called()
+    mocked_automatic_checkout_completion_task.assert_called_once_with(
+        checkout.pk, None, app.id
+    )
 
 
 def test_create_transaction_event_from_request_and_webhook_response_incorrect_data(
@@ -1061,6 +1268,7 @@ def test_create_transaction_event_from_request_and_webhook_response_twice_auth(
     assert TransactionEvent.objects.count() == 3
     request_event.refresh_from_db()
     assert request_event.psp_reference == expected_psp_reference
+    assert request_event.include_in_calculations is True
     assert failed_event
     assert failed_event.psp_reference == expected_psp_reference
     assert failed_event.type == TransactionEventType.AUTHORIZATION_FAILURE
@@ -1116,6 +1324,7 @@ def test_create_transaction_event_from_request_and_webhook_response_same_event(
     assert TransactionEvent.objects.count() == 2
     request_event.refresh_from_db()
     assert request_event.psp_reference == expected_psp_reference
+    assert request_event.include_in_calculations is True
     assert event
     assert event.pk == existing_authorize_success.pk
 
@@ -1165,6 +1374,7 @@ def test_create_transaction_event_from_request_handle_incorrect_values(
     assert TransactionEvent.objects.count() == 2
     request_event.refresh_from_db()
     assert request_event.psp_reference == expected_psp_reference
+    assert request_event.include_in_calculations is False
 
 
 @freeze_time("2018-05-31 12:00:01")
@@ -1212,6 +1422,7 @@ def test_create_transaction_event_from_request_and_webhook_response_different_am
     assert TransactionEvent.objects.count() == 3
     request_event.refresh_from_db()
     assert request_event.psp_reference == expected_psp_reference
+    assert request_event.include_in_calculations is True
     assert failed_event
     assert failed_event.psp_reference == expected_psp_reference
     assert failed_event.type == TransactionEventType.AUTHORIZATION_FAILURE
@@ -1524,6 +1735,179 @@ def test_create_event_from_request_and_webhook_pending_event_calculate_refundabl
     transaction.refresh_from_db()
     assert transaction.last_refund_success is True
     assert checkout.automatically_refundable is True
+
+
+def test_create_transaction_event_from_request_and_webhook_response_message_loo_long(
+    transaction_item_generator, app, caplog
+):
+    # given
+    transaction = transaction_item_generator()
+    request_event = TransactionEvent.objects.create(
+        type=TransactionEventType.CHARGE_REQUEST,
+        amount_value=Decimal(11.00),
+        currency="USD",
+        transaction_id=transaction.id,
+    )
+
+    event_amount = 12.00
+    event_type = TransactionEventType.CHARGE_FAILURE
+    event_time = "2022-11-18T13:25:58.169685+00:00"
+    event_url = "http://localhost:3000/event/ref123"
+    event_message = "m" * 550
+
+    expected_psp_reference = "psp:122:222"
+
+    response_data = {
+        "pspReference": expected_psp_reference,
+        "amount": event_amount,
+        "result": event_type.upper(),
+        "time": event_time,
+        "externalUrl": event_url,
+        "message": event_message,
+        "actions": ["CHARGE", "CHARGE", "CANCEL"],
+    }
+
+    # when
+    event = create_transaction_event_from_request_and_webhook_response(
+        request_event, app, response_data
+    )
+
+    # then
+    transaction.refresh_from_db()
+    assert len(transaction.available_actions) == 2
+    assert set(transaction.available_actions) == set(["charge", "cancel"])
+    assert transaction.events.count() == 2
+    request_event.refresh_from_db()
+    assert request_event.psp_reference == expected_psp_reference
+    assert request_event.include_in_calculations is True
+    assert event
+    assert event.psp_reference == expected_psp_reference
+    assert event.amount_value == event_amount
+    assert event.created_at == datetime.fromisoformat(event_time)
+    assert event.external_url == event_url
+    assert event.message == event_message[:509] + "..."
+    assert event.type == event_type
+    assert len(caplog.records) == 1
+    assert caplog.records[0].message == (
+        "Value for field: message in response of transaction action webhook "
+        "exceeds the character field limit. Message has been truncated."
+    )
+    assert caplog.records[0].levelno == logging.WARNING
+
+
+@pytest.mark.parametrize(
+    ("input_message", "expected_message"),
+    [("m" * 512, "m" * 512), (None, ""), ("", ""), (5, "5"), ("你好世界", "你好世界")],
+)
+def test_create_transaction_event_from_request_and_webhook_with_message(
+    input_message, expected_message, transaction_item_generator, app
+):
+    # given
+    transaction = transaction_item_generator()
+    request_event = TransactionEvent.objects.create(
+        type=TransactionEventType.CHARGE_REQUEST,
+        amount_value=Decimal(11.00),
+        currency="USD",
+        transaction_id=transaction.id,
+    )
+
+    event_amount = 12.00
+    event_type = TransactionEventType.CHARGE_FAILURE
+    event_time = "2022-11-18T13:25:58.169685+00:00"
+    event_url = "http://localhost:3000/event/ref123"
+
+    expected_psp_reference = "psp:122:222"
+
+    response_data = {
+        "pspReference": expected_psp_reference,
+        "amount": event_amount,
+        "result": event_type.upper(),
+        "time": event_time,
+        "externalUrl": event_url,
+        "message": input_message,
+        "actions": ["CHARGE", "CHARGE", "CANCEL"],
+    }
+
+    # when
+    event = create_transaction_event_from_request_and_webhook_response(
+        request_event, app, response_data
+    )
+
+    # then
+    transaction.refresh_from_db()
+    assert len(transaction.available_actions) == 2
+    assert set(transaction.available_actions) == set(["charge", "cancel"])
+    assert transaction.events.count() == 2
+    request_event.refresh_from_db()
+    assert request_event.psp_reference == expected_psp_reference
+    assert request_event.include_in_calculations is True
+    assert event
+    assert event.psp_reference == expected_psp_reference
+    assert event.amount_value == event_amount
+    assert event.created_at == datetime.fromisoformat(event_time)
+    assert event.external_url == event_url
+    assert event.message == expected_message
+    assert event.type == event_type
+
+
+class NonParsableObject:
+    def __str__(self):
+        raise "こんにちは".encode("ascii")
+
+
+def test_create_transaction_event_from_request_and_webhook_invalid_message(
+    transaction_item_generator, app, caplog
+):
+    # given
+    transaction = transaction_item_generator()
+    request_event = TransactionEvent.objects.create(
+        type=TransactionEventType.CHARGE_REQUEST,
+        amount_value=Decimal(11.00),
+        currency="USD",
+        transaction_id=transaction.id,
+    )
+
+    event_amount = 12.00
+    event_type = TransactionEventType.CHARGE_FAILURE
+    event_time = "2022-11-18T13:25:58.169685+00:00"
+    event_url = "http://localhost:3000/event/ref123"
+    input_message = NonParsableObject()
+
+    expected_psp_reference = "psp:122:222"
+
+    response_data = {
+        "pspReference": expected_psp_reference,
+        "amount": event_amount,
+        "result": event_type.upper(),
+        "time": event_time,
+        "externalUrl": event_url,
+        "message": input_message,
+        "actions": ["CHARGE", "CHARGE", "CANCEL"],
+    }
+
+    # when
+    event = create_transaction_event_from_request_and_webhook_response(
+        request_event, app, response_data
+    )
+
+    # then
+    transaction.refresh_from_db()
+    assert len(transaction.available_actions) == 2
+    assert set(transaction.available_actions) == set(["charge", "cancel"])
+    assert transaction.events.count() == 2
+    request_event.refresh_from_db()
+    assert request_event.psp_reference == expected_psp_reference
+    assert request_event.include_in_calculations is True
+    assert event
+    assert event.psp_reference == expected_psp_reference
+    assert event.amount_value == event_amount
+    assert event.created_at == datetime.fromisoformat(event_time)
+    assert event.external_url == event_url
+    assert event.message == ""
+    assert event.type == event_type
+    assert (
+        "Incorrect value for field: message in response of transaction action webhook."
+    ) in (record.message for record in caplog.records)
 
 
 @pytest.mark.parametrize(
@@ -2277,6 +2661,123 @@ def test_create_transaction_event_updates_transaction_modified_at_for_failure(
     assert checkout.last_transaction_modified_at == calculation_time
 
 
+def test_create_transaction_event_message_limit_exceeded(
+    transaction_item_generator,
+    transaction_session_response,
+    webhook_app,
+    plugins_manager,
+    checkout,
+    caplog,
+):
+    # given
+    expected_amount = Decimal("15")
+    message = "m" * 1000
+    response = transaction_session_response.copy()
+    response["amount"] = expected_amount
+    response["message"] = message
+
+    transaction = transaction_item_generator(checkout_id=checkout.pk)
+    request_event = TransactionEvent.objects.create(
+        transaction=transaction, include_in_calculations=False
+    )
+
+    # when
+    create_transaction_event_for_transaction_session(
+        request_event,
+        webhook_app,
+        manager=plugins_manager,
+        transaction_webhook_response=response,
+    )
+
+    # then
+    transaction.refresh_from_db()
+    assert transaction.events.count() == 2
+    event = transaction.events.last()
+    assert event.message == message[:509] + "..."
+    assert len(caplog.records) == 1
+    assert caplog.records[0].message == (
+        "Value for field: message in response of transaction action webhook "
+        "exceeds the character field limit. Message has been truncated."
+    )
+    assert caplog.records[0].levelno == logging.WARNING
+
+
+@pytest.mark.parametrize(
+    ("input_message", "expected_message"),
+    [("m" * 512, "m" * 512), (None, ""), ("", ""), (5, "5"), ("你好世界", "你好世界")],
+)
+def test_create_transaction_event_with_message(
+    input_message,
+    expected_message,
+    transaction_item_generator,
+    transaction_session_response,
+    webhook_app,
+    plugins_manager,
+    checkout,
+):
+    # given
+    expected_amount = Decimal("15")
+    response = transaction_session_response.copy()
+    response["amount"] = expected_amount
+    response["message"] = input_message
+
+    transaction = transaction_item_generator(checkout_id=checkout.pk)
+    request_event = TransactionEvent.objects.create(
+        transaction=transaction, include_in_calculations=False
+    )
+
+    # when
+    create_transaction_event_for_transaction_session(
+        request_event,
+        webhook_app,
+        manager=plugins_manager,
+        transaction_webhook_response=response,
+    )
+
+    # then
+    transaction.refresh_from_db()
+    assert transaction.events.count() == 2
+    event = transaction.events.last()
+    assert event.message == expected_message
+
+
+def test_create_transaction_event_with_invalid_message(
+    transaction_item_generator,
+    transaction_session_response,
+    webhook_app,
+    plugins_manager,
+    checkout,
+    caplog,
+):
+    # given
+    expected_amount = Decimal("15")
+    response = transaction_session_response.copy()
+    response["amount"] = expected_amount
+    response["message"] = NonParsableObject()
+
+    transaction = transaction_item_generator(checkout_id=checkout.pk)
+    request_event = TransactionEvent.objects.create(
+        transaction=transaction, include_in_calculations=False
+    )
+
+    # when
+    create_transaction_event_for_transaction_session(
+        request_event,
+        webhook_app,
+        manager=plugins_manager,
+        transaction_webhook_response=response,
+    )
+
+    # then
+    transaction.refresh_from_db()
+    assert transaction.events.count() == 2
+    event = transaction.events.last()
+    assert event.message == ""
+    assert (
+        "Incorrect value for field: message in response of transaction action webhook."
+    ) in (record.message for record in caplog.records)
+
+
 def test_recalculate_refundable_for_checkout_with_request_refund(
     transaction_item_generator, checkout
 ):
@@ -2831,3 +3332,85 @@ def test_get_transaction_event_amount_for_info_event_type(
 
     # then
     assert amount == 0
+
+
+def test_deduplicate_event(transaction_events_generator, transaction_item, app):
+    # given
+    event = TransactionEvent(
+        psp_reference="psp:123",
+        type=TransactionEventType.CHARGE_SUCCESS,
+        amount_value=Decimal("10"),
+        transaction=transaction_item,
+        currency=transaction_item.currency,
+    )
+
+    # when
+    result_event, err_msg = deduplicate_event(event, app)
+
+    # then
+    assert err_msg is None
+    assert result_event
+
+
+def test_deduplicate_event_different_amount(
+    transaction_events_generator, transaction_item, app, caplog
+):
+    # given
+    events = transaction_events_generator(
+        psp_references=["psp:123"],
+        types=[TransactionEventType.CHARGE_SUCCESS],
+        amounts=[Decimal("10")],
+        transaction=transaction_item,
+    )
+    event = TransactionEvent(
+        psp_reference="psp:123",
+        type=TransactionEventType.CHARGE_SUCCESS,
+        amount_value=Decimal("12"),
+        transaction=transaction_item,
+        currency=transaction_item.currency,
+    )
+
+    # when
+    result_event, err_msg = deduplicate_event(event, app)
+
+    # then
+    assert result_event.id == events[0].id
+    assert err_msg == (
+        "The transaction with provided `pspReference` and "
+        "`type` already exists with different amount."
+    )
+    assert caplog.records[0].levelno == logging.WARNING
+    assert caplog.records[0].message == err_msg
+
+
+def test_deduplicate_event_authorization_already_exists(
+    transaction_events_generator, transaction_item, app, caplog
+):
+    # given
+    transaction_events_generator(
+        psp_references=["psp:123"],
+        types=[TransactionEventType.AUTHORIZATION_SUCCESS],
+        amounts=[Decimal("10")],
+        transaction=transaction_item,
+    )
+    event = TransactionEvent(
+        psp_reference="psp:111",
+        type=TransactionEventType.AUTHORIZATION_SUCCESS,
+        amount_value=Decimal("10"),
+        transaction=transaction_item,
+        currency=transaction_item.currency,
+    )
+
+    # when
+    result_event, err_msg = deduplicate_event(event, app)
+
+    # then
+    assert result_event
+    assert err_msg == (
+        "Event with `AUTHORIZATION_SUCCESS` already "
+        "reported for the transaction. Use "
+        "`AUTHORIZATION_ADJUSTMENT` to change the "
+        "authorization amount."
+    )
+    assert caplog.records[0].levelno == logging.WARNING
+    assert caplog.records[0].message == err_msg

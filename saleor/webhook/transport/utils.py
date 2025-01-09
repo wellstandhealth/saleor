@@ -1,3 +1,4 @@
+import datetime
 import decimal
 import hashlib
 import json
@@ -6,8 +7,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from time import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Union
 from urllib.parse import unquote, urlparse, urlunparse
+from uuid import UUID
 
 import boto3
 from botocore.exceptions import ClientError
@@ -86,6 +88,41 @@ class WebhookResponse:
     duration: float = 0.0
 
 
+class RequestorModelName:
+    # lowercase, as it is returned as such by `model._meta.model_name`
+    APP = "app.app"
+    USER = "account.user"
+
+
+@dataclass
+class DeferredPayloadData:
+    model_name: str
+    object_id: Union[int, UUID]
+    requestor_model_name: Optional[str]
+    requestor_object_id: Optional[Union[int, UUID]]
+    request_time: Optional[datetime.datetime]
+
+
+def prepare_deferred_payload_data(
+    subscribable_object, requestor, request_time
+) -> DeferredPayloadData:
+    model_name = (
+        f"{subscribable_object._meta.app_label}.{subscribable_object._meta.model_name}"
+    )
+    requestor_model_name = (
+        f"{requestor._meta.app_label}.{requestor._meta.model_name}"
+        if requestor
+        else None
+    )
+    return DeferredPayloadData(
+        model_name=model_name,
+        object_id=subscribable_object.pk,
+        request_time=request_time,
+        requestor_model_name=requestor_model_name,
+        requestor_object_id=(requestor.pk if requestor else None),
+    )
+
+
 def generate_cache_key_for_webhook(
     key_data: dict, webhook_url: str, event: str, app_id: int
 ) -> str:
@@ -103,6 +140,7 @@ def generate_cache_key_for_webhook(
     )
 
 
+# TODO (PE-568): change typing of data to `bytes` to avoid unnecessary encoding.
 def send_webhook_using_http(
     target_url,
     message,
@@ -258,13 +296,20 @@ def send_webhook_using_google_cloud_pubsub(
                 eventType=event_type,
                 signature=signature,
             )
-        except (pubsub_v1.publisher.exceptions.MessageTooLargeError, RuntimeError) as e:
+            response = future.result(
+                timeout=settings.WEBHOOK_WAITING_FOR_RESPONSE_TIMEOUT
+            )
+        except (
+            pubsub_v1.publisher.exceptions.MessageTooLargeError,
+            RuntimeError,
+            TimeoutError,
+        ) as e:
             return WebhookResponse(content=str(e), status=EventDeliveryStatus.FAILED)
         response_duration = duration()
-        response = future.result()
         return WebhookResponse(content=response, duration=response_duration)
 
 
+# TODO (PE-568): change typing of data to `bytes` to avoid unnecessary encoding.
 def send_webhook_using_scheme_method(
     target_url,
     domain,
@@ -359,20 +404,48 @@ def handle_webhook_retry(
     return is_success
 
 
-def get_delivery_for_webhook(event_delivery_id) -> Optional["EventDelivery"]:
-    try:
-        delivery = EventDelivery.objects.select_related("payload", "webhook__app").get(
-            id=event_delivery_id
-        )
-    except EventDelivery.DoesNotExist:
-        logger.warning("Event delivery id: %r not found", event_delivery_id)
-        return None
+def get_delivery_for_webhook(
+    event_delivery_id,
+) -> tuple[Optional["EventDelivery"], bool]:
+    delivery, inactive_delivery_ids = get_multiple_deliveries_for_webhooks(
+        [event_delivery_id]
+    )
+    delivery = delivery.get(event_delivery_id)
+    not_found = False
+    if not delivery and event_delivery_id not in inactive_delivery_ids:
+        not_found = True
+    return delivery, not_found
 
-    if not delivery.webhook.is_active:
-        delivery_update(delivery=delivery, status=EventDeliveryStatus.FAILED)
-        logger.info("Event delivery id: %r webhook is disabled.", event_delivery_id)
-        return None
-    return delivery
+
+def get_multiple_deliveries_for_webhooks(
+    event_delivery_ids,
+) -> tuple[dict[int, "EventDelivery"], set[int]]:
+    deliveries = EventDelivery.objects.select_related("payload", "webhook__app").filter(
+        id__in=event_delivery_ids
+    )
+
+    active_deliveries = {}
+    inactive_delivery_ids = set()
+
+    not_found_delivery_ids = set(event_delivery_ids) - set(
+        delivery.pk for delivery in deliveries
+    )
+    for not_found_delivery_id in not_found_delivery_ids:
+        logger.warning("Event delivery id: %r not found", not_found_delivery_id)
+
+    for delivery in deliveries:
+        if delivery.webhook.is_active:
+            active_deliveries[delivery.pk] = delivery
+        else:
+            logger.info("Event delivery id: %r webhook is disabled.", delivery.pk)
+            inactive_delivery_ids.add(delivery.pk)
+
+    if inactive_delivery_ids:
+        EventDelivery.objects.filter(id__in=inactive_delivery_ids).update(
+            status=EventDeliveryStatus.FAILED
+        )
+
+    return active_deliveries, inactive_delivery_ids
 
 
 @contextmanager
@@ -385,8 +458,9 @@ def catch_duration_time():
 def create_attempt(
     delivery: "EventDelivery",
     task_id: Optional[str] = None,
+    with_save: bool = True,
 ):
-    attempt = EventDeliveryAttempt.objects.create(
+    attempt = EventDeliveryAttempt(
         delivery=delivery,
         task_id=task_id,
         duration=None,
@@ -395,6 +469,8 @@ def create_attempt(
         response_headers=None,
         status=EventDeliveryStatus.PENDING,
     )
+    if with_save:
+        attempt.save()
     return attempt
 
 
@@ -402,49 +478,77 @@ def create_attempt(
 def attempt_update(
     attempt: "EventDeliveryAttempt",
     webhook_response: "WebhookResponse",
+    with_save: bool = True,
 ):
     attempt.duration = webhook_response.duration
-    attempt.response = webhook_response.content
+    if isinstance(webhook_response.content, str):
+        attempt.response = webhook_response.content[
+            : settings.EVENT_DELIVERY_ATTEMPT_RESPONSE_SIZE_LIMIT
+        ]
+        if attempt.response != webhook_response.content:
+            attempt.response += "..."
+    else:
+        attempt.response = webhook_response.content
     attempt.response_headers = json.dumps(webhook_response.response_headers)
     attempt.response_status_code = webhook_response.response_status_code
     attempt.request_headers = json.dumps(webhook_response.request_headers)
     attempt.status = webhook_response.status
-    attempt.save(
-        update_fields=[
-            "duration",
-            "response",
-            "response_headers",
-            "response_status_code",
-            "request_headers",
-            "status",
-        ]
-    )
+
+    if attempt.id and with_save:
+        attempt.save(
+            update_fields=[
+                "duration",
+                "response",
+                "response_headers",
+                "response_status_code",
+                "request_headers",
+                "status",
+            ]
+        )
 
 
 @allow_writer()
 def clear_successful_delivery(delivery: "EventDelivery"):
-    if delivery.status == EventDeliveryStatus.SUCCESS:
-        payload_id = delivery.payload_id
-        delivery.delete()
-        if payload_id:
-            payloads_to_delete = EventPayload.objects.filter(
-                pk=payload_id, deliveries__isnull=True
+    if not delivery.id or delivery.status != EventDeliveryStatus.SUCCESS:
+        return
+
+    payload_id = delivery.payload_id
+    delivery.delete()
+    if payload_id:
+        payloads_to_delete = EventPayload.objects.filter(
+            pk=payload_id, deliveries__isnull=True
+        )
+        files_to_delete = [
+            event_payload.payload_file.name
+            for event_payload in payloads_to_delete.using(
+                settings.DATABASE_CONNECTION_REPLICA_NAME
             )
-            files_to_delete = [
-                event_payload.payload_file.name
-                for event_payload in payloads_to_delete.using(
-                    settings.DATABASE_CONNECTION_REPLICA_NAME
-                )
-                if event_payload.payload_file
-            ]
-            payloads_to_delete.delete()
-            delete_files_from_private_storage_task(files_to_delete)
+            if event_payload.payload_file
+        ]
+        payloads_to_delete.delete()
+        delete_files_from_private_storage_task(files_to_delete)
 
 
 @allow_writer()
 def delivery_update(delivery: "EventDelivery", status: str):
     delivery.status = status
-    delivery.save(update_fields=["status"])
+    if delivery.id:
+        delivery.save(update_fields=["status"])
+
+
+@allow_writer()
+def save_unsuccessful_delivery_attempt(attempt: "EventDeliveryAttempt"):
+    delivery = attempt.delivery
+    if not delivery or delivery.status == EventDeliveryStatus.SUCCESS:
+        return
+
+    event_payload = delivery.payload
+    if event_payload:
+        event_payload.save_as_file()
+
+    delivery.save()
+    if not attempt.id:
+        attempt.save()
 
 
 def trigger_transaction_request(

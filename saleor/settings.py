@@ -688,6 +688,9 @@ EVENT_PAYLOAD_DELETE_PERIOD = timedelta(
 EVENT_PAYLOAD_DELETE_TASK_TIME_LIMIT = timedelta(
     seconds=parse(os.environ.get("EVENT_PAYLOAD_DELETE_TASK_TIME_LIMIT", "1 hour"))
 )
+EVENT_DELIVERY_ATTEMPT_RESPONSE_SIZE_LIMIT = int(
+    os.environ.get("EVENT_DELIVERY_ATTEMPT_RESPONSE_SIZE_LIMIT", 1024)
+)
 # Time between marking app "to remove" and removing the app from the database.
 # App is not visible for the user after removing, but it still exists in the database.
 # Saleor needs time to process sending `APP_DELETED` webhook and possible retrying,
@@ -933,6 +936,11 @@ COLLECTION_PRODUCT_UPDATED_QUEUE_NAME = os.environ.get(
     "COLLECTION_PRODUCT_UPDATED_QUEUE_NAME", None
 )
 
+# Queue name for execution of automatic checkout completion
+AUTOMATIC_CHECKOUT_COMPLETION_QUEUE_NAME = os.environ.get(
+    "AUTOMATIC_CHECKOUT_COMPLETION_QUEUE_NAME", None
+)
+
 # Lock time for request password reset mutation per user (seconds)
 RESET_PASSWORD_LOCK_TIME = parse(
     os.environ.get("RESET_PASSWORD_LOCK_TIME", "15 minutes")
@@ -966,8 +974,10 @@ REQUESTS_CONN_EST_TIMEOUT = 2
 # Default timeout for external requests.
 COMMON_REQUESTS_TIMEOUT = (REQUESTS_CONN_EST_TIMEOUT, 18)
 
-WEBHOOK_TIMEOUT = (REQUESTS_CONN_EST_TIMEOUT, 18)
-WEBHOOK_SYNC_TIMEOUT = (REQUESTS_CONN_EST_TIMEOUT, 18)
+WEBHOOK_WAITING_FOR_RESPONSE_TIMEOUT = 18
+
+WEBHOOK_TIMEOUT = (REQUESTS_CONN_EST_TIMEOUT, WEBHOOK_WAITING_FOR_RESPONSE_TIMEOUT)
+WEBHOOK_SYNC_TIMEOUT = (REQUESTS_CONN_EST_TIMEOUT, WEBHOOK_WAITING_FOR_RESPONSE_TIMEOUT)
 
 # The max number of rules with order_predicate defined
 ORDER_RULES_LIMIT = os.environ.get("ORDER_RULES_LIMIT", 100)

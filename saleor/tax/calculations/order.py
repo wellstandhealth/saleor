@@ -101,8 +101,11 @@ def _set_order_totals(
         undiscounted_subtotal += line.undiscounted_total_price
 
     shipping_tax_rate = order.shipping_tax_rate or 0
+    undiscounted_base_shipping_price = base_calculations.undiscounted_order_shipping(
+        order
+    )
     undiscounted_shipping_price = calculate_flat_rate_tax(
-        order.base_shipping_price,
+        undiscounted_base_shipping_price,
         Decimal(shipping_tax_rate * 100),
         prices_entered_with_tax,
     )
@@ -116,7 +119,11 @@ def _set_order_totals(
 def _calculate_order_shipping(
     order: "Order", tax_rate: Decimal, prices_entered_with_tax: bool
 ) -> TaxedMoney:
-    shipping_price = order.shipping_price.net
+    shipping_price = (
+        order.shipping_price_gross
+        if prices_entered_with_tax
+        else order.shipping_price_net
+    )
     taxed_shipping_price = calculate_flat_rate_tax(
         shipping_price, tax_rate, prices_entered_with_tax
     )
@@ -158,7 +165,9 @@ def update_taxes_for_order_lines(
             tax_rate = default_tax_rate
 
         undiscounted_subtotal += line.undiscounted_base_unit_price * line.quantity
-        price_with_discounts = line.unit_price.net
+        price_with_discounts = (
+            line.unit_price.gross if prices_entered_with_tax else line.unit_price.net
+        )
         unit_price = calculate_flat_rate_tax(
             price_with_discounts, tax_rate, prices_entered_with_tax
         )

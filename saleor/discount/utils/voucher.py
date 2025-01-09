@@ -11,10 +11,7 @@ from ...core.db.connection import allow_writer
 from ...core.taxes import zero_money
 from ...core.utils.promo_code import InvalidPromoCode
 from ...order.models import Order
-from .. import (
-    DiscountType,
-    VoucherType,
-)
+from .. import DiscountType, VoucherType
 from ..models import (
     DiscountValueType,
     NotApplicable,
@@ -230,9 +227,7 @@ def _get_the_cheapest_line(
 ) -> Optional["LineInfo"]:
     if not lines_info:
         return None
-    return min(
-        lines_info, key=lambda line_info: line_info.channel_listing.discounted_price
-    )
+    return min(lines_info, key=lambda line_info: line_info.variant_discounted_price)
 
 
 def validate_voucher_for_checkout(
@@ -322,12 +317,15 @@ def create_or_update_discount_object_from_order_level_voucher(
     order, database_connection_name
 ):
     """Create or update discount object for ENTIRE_ORDER and SHIPPING voucher."""
-    if not order.voucher_id:
+    voucher = order.voucher
+    if not order.voucher_id or (
+        is_order_level_voucher(voucher)
+        and order.discounts.filter(type=DiscountType.MANUAL)
+    ):
         with allow_writer():
             order.discounts.filter(type=DiscountType.VOUCHER).delete()
             return
 
-    voucher = order.voucher
     if not is_order_level_voucher(voucher) and not is_shipping_voucher(voucher):
         return
 
@@ -339,13 +337,22 @@ def create_or_update_discount_object_from_order_level_voucher(
     if not voucher_channel_listing:
         return
 
-    price_to_discount = zero_money(order.currency)
+    discount_amount = zero_money(order.currency)
     if is_order_level_voucher(voucher):
-        price_to_discount = order.subtotal.net
+        discount_amount = voucher.get_discount_amount_for(
+            order.subtotal.net, order.channel
+        )
     if is_shipping_voucher(voucher):
-        price_to_discount = order.shipping_price_net
+        discount_amount = voucher.get_discount_amount_for(
+            order.undiscounted_base_shipping_price, order.channel
+        )
+        # Shipping voucher is tricky: it is associated with an order, but it
+        # decreases base price, similar to line level discounts
+        order.base_shipping_price = max(
+            order.undiscounted_base_shipping_price - discount_amount,
+            zero_money(order.currency),
+        )
 
-    discount_amount = voucher.get_discount_amount_for(price_to_discount, order.channel)
     discount_reason = f"Voucher code: {order.voucher_code}"
     discount_name = voucher.name or ""
 
@@ -428,7 +435,10 @@ def prepare_line_discount_objects_for_voucher(
         if discounts_to_update := line_info.get_voucher_discounts():
             discount_to_update = discounts_to_update[0]
 
-        if not discount_amount or line.is_gift:
+        # manual line discount do not stack with other line discounts
+        manual_line_discount = line_info.get_manual_line_discount()
+
+        if not discount_amount or line.is_gift or manual_line_discount:
             if discount_to_update:
                 line_discounts_to_remove.append(discount_to_update)
             continue

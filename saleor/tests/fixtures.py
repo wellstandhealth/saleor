@@ -81,6 +81,7 @@ from ..discount.models import (
     VoucherTranslation,
 )
 from ..discount.utils.voucher import (
+    create_or_update_discount_object_from_order_level_voucher,
     get_products_voucher_discount,
     validate_voucher_in_order,
 )
@@ -90,7 +91,8 @@ from ..graphql.core.utils import to_global_id_or_none
 from ..menu.models import Menu, MenuItem, MenuItemTranslation
 from ..order import OrderOrigin, OrderStatus
 from ..order.actions import cancel_fulfillment, fulfill_order_lines
-from ..order.base_calculations import apply_order_discounts
+from ..order.base_calculations import base_order_subtotal
+from ..order.calculations import remove_tax
 from ..order.events import (
     OrderEvents,
     fulfillment_refunded_event,
@@ -148,6 +150,7 @@ from ..shipping.models import (
 )
 from ..shipping.utils import convert_to_shipping_method_data
 from ..site.models import SiteSettings
+from ..tax import TaxCalculationStrategy
 from ..tax.utils import calculate_tax_rate, get_tax_class_kwargs_for_order_line
 from ..thumbnail.models import Thumbnail
 from ..warehouse import WarehouseClickAndCollectOption
@@ -573,6 +576,9 @@ def checkout_with_item_and_gift_promotion(checkout_with_item, gift_promotion_rul
     top_price, variant_id = max(
         variant_listings.values_list("discounted_price_amount", "variant")
     )
+    variant_listing = [
+        listing for listing in variant_listings if listing.variant_id == variant_id
+    ][0]
 
     line = CheckoutLine.objects.create(
         checkout=checkout_with_item,
@@ -580,6 +586,7 @@ def checkout_with_item_and_gift_promotion(checkout_with_item, gift_promotion_rul
         variant_id=variant_id,
         is_gift=True,
         currency="USD",
+        undiscounted_unit_price_amount=variant_listing.price_amount,
     )
 
     CheckoutLineDiscount.objects.create(
@@ -895,6 +902,15 @@ def checkout_with_shipping_address(checkout_with_variants, address):
 def checkout_with_variants_for_cc(
     checkout, stocks_for_cc, product_variant_list, product_with_two_variants
 ):
+    channel_listings_map = {
+        listing.variant_id: listing
+        for listing in ProductVariantChannelListing.objects.filter(
+            channel_id=checkout.channel_id,
+            variant__in=product_variant_list
+            + [product_with_two_variants.variants.last()],
+        )
+    }
+
     CheckoutLine.objects.bulk_create(
         [
             CheckoutLine(
@@ -902,18 +918,27 @@ def checkout_with_variants_for_cc(
                 variant=product_variant_list[0],
                 quantity=3,
                 currency="USD",
+                undiscounted_unit_price_amount=channel_listings_map.get(
+                    product_variant_list[0].id
+                ).price_amount,
             ),
             CheckoutLine(
                 checkout=checkout,
                 variant=product_variant_list[1],
                 quantity=10,
                 currency="USD",
+                undiscounted_unit_price_amount=channel_listings_map.get(
+                    product_variant_list[0].id
+                ).price_amount,
             ),
             CheckoutLine(
                 checkout=checkout,
                 variant=product_with_two_variants.variants.last(),
                 quantity=5,
                 currency="USD",
+                undiscounted_unit_price_amount=channel_listings_map.get(
+                    product_variant_list[0].id
+                ).price_amount,
             ),
         ]
     )
@@ -952,6 +977,15 @@ def checkout_with_items_and_shipping(checkout_with_items, address, shipping_meth
     checkout_with_items.billing_address = address
     checkout_with_items.save()
     return checkout_with_items
+
+
+@pytest.fixture
+def checkout_with_item_and_shipping(checkout_with_item, address, shipping_method):
+    checkout_with_item.shipping_address = address
+    checkout_with_item.shipping_method = shipping_method
+    checkout_with_item.billing_address = address
+    checkout_with_item.save()
+    return checkout_with_item
 
 
 @pytest.fixture
@@ -1441,6 +1475,7 @@ def order_generator(customer_user, channel_USD):
             private_metadata=private_metadata,
             checkout_token=checkout_token,
             status=status,
+            undiscounted_base_shipping_price_amount=Decimal("0.0"),
         )
         if search_vector_class:
             search_vector = search_vector_class(
@@ -1957,6 +1992,26 @@ def color_attribute_with_translations(db):
     attribute = Attribute.objects.create(
         slug="color",
         name="Color",
+        type=AttributeType.PRODUCT_TYPE,
+        filterable_in_storefront=True,
+        filterable_in_dashboard=True,
+        available_in_grid=True,
+    )
+    value1 = AttributeValue.objects.create(attribute=attribute, name="Red", slug="red")
+    AttributeValue.objects.create(attribute=attribute, name="Blue", slug="blue")
+    attribute.translations.create(language_code="pl", name="Czerwony")
+    attribute.translations.create(language_code="de", name="Rot")
+    value1.translations.create(language_code="pl", plain_text="Old Kolor")
+    value1.translations.create(language_code="de", name="Rot", plain_text="Old Kolor")
+
+    return attribute
+
+
+@pytest.fixture
+def second_color_attribute_with_translations(db):
+    attribute = Attribute.objects.create(
+        slug="second-color",
+        name="Second color",
         type=AttributeType.PRODUCT_TYPE,
         filterable_in_storefront=True,
         filterable_in_dashboard=True,
@@ -4575,6 +4630,7 @@ def order_line_with_allocation_in_many_stocks(
         user=customer_user,
         channel=channel_USD,
         origin=OrderOrigin.CHECKOUT,
+        undiscounted_base_shipping_price_amount=Decimal("0.0"),
     )
 
     product = variant.product
@@ -4678,6 +4734,9 @@ def checkout_line_with_reservation_in_many_stocks(
     checkout_line = checkout.lines.create(
         variant=variant,
         quantity=3,
+        undiscounted_unit_price_amount=variant.channel_listings.get(
+            channel_id=checkout.channel_id
+        ).price_amount,
     )
 
     reserved_until = timezone.now() + timedelta(minutes=5)
@@ -4711,6 +4770,9 @@ def checkout_line_with_one_reservation(
     checkout_line = checkout.lines.create(
         variant=variant,
         quantity=2,
+        undiscounted_unit_price_amount=variant.channel_listings.get(
+            channel_id=checkout.channel_id
+        ).price_amount,
     )
 
     reserved_until = timezone.now() + timedelta(minutes=5)
@@ -4949,6 +5011,73 @@ def get_products_voucher_discount_for_order(order: Order, voucher: Voucher) -> M
 
 
 @pytest.fixture
+def order_lines_generator():
+    def create_order_line(
+        order, variants, unit_prices, quantities, create_allocations=True
+    ):
+        channel = order.channel
+        order_lines = []
+        allocations = []
+        stocks_to_update = []
+        variant_channel_listings_map = {
+            cl.variant_id: cl
+            for cl in ProductVariantChannelListing.objects.filter(
+                variant__in=variants, channel=channel
+            )
+        }
+        for variant, price, quantity in zip(variants, unit_prices, quantities):
+            product = variant.product
+            variant_channel_listing = variant_channel_listings_map[variant.id]
+            currency = channel.currency_code
+            base_price = Money(price, currency)
+            net = Money(price, channel.currency_code)
+            gross = Money(amount=net.amount * Decimal(1.23), currency=currency)
+            unit_price = TaxedMoney(net=net, gross=gross)
+            order_line = OrderLine(
+                order=order,
+                product_name=str(product),
+                variant_name=str(variant),
+                product_sku=variant.sku,
+                product_variant_id=variant.get_global_id(),
+                is_shipping_required=variant.is_shipping_required(),
+                is_gift_card=variant.is_gift_card(),
+                quantity=quantity,
+                variant=variant,
+                unit_price=unit_price,
+                total_price=unit_price * quantity,
+                undiscounted_unit_price=unit_price,
+                undiscounted_total_price=unit_price * quantity,
+                base_unit_price=base_price,
+                undiscounted_base_unit_price=base_price,
+                tax_rate=Decimal("0.23"),
+                **get_tax_class_kwargs_for_order_line(product.product_type.tax_class),
+            )
+            order_lines.append(order_line)
+            variant_channel_listing.price_amount = price
+            variant_channel_listing.discounted_price_amount = price
+            if create_allocations:
+                stock = variant.stocks.first()
+                allocation = Allocation(
+                    order_line=order_line, stock=stock, quantity_allocated=quantity
+                )
+                allocations.append(allocation)
+                stock.quantity_allocated += quantity
+                stocks_to_update.append(stock)
+
+        OrderLine.objects.bulk_create(order_lines)
+        if allocations:
+            Allocation.objects.bulk_create(allocations)
+            Stock.objects.bulk_update(stocks_to_update, ["quantity_allocated"])
+        ProductVariantChannelListing.objects.bulk_update(
+            variant_channel_listings_map.values(),
+            ["price_amount", "discounted_price_amount"],
+        )
+        return order_lines
+
+    return create_order_line
+
+
+@pytest.fixture
 def order_with_lines(
     order,
     product_type,
@@ -4957,6 +5086,7 @@ def order_with_lines(
     warehouse,
     channel_USD,
     default_tax_class,
+    order_lines_generator,
 ):
     product = Product.objects.create(
         name="Test product",
@@ -4972,44 +5102,17 @@ def order_with_lines(
         visible_in_listings=True,
         available_for_purchase_at=datetime.datetime.now(pytz.UTC),
     )
-    variant = ProductVariant.objects.create(product=product, sku="SKU_AA")
-    channel_listing = ProductVariantChannelListing.objects.create(
-        variant=variant,
+    variant_1_quantity = 3
+    variant_1 = ProductVariant.objects.create(product=product, sku="SKU_AA")
+    ProductVariantChannelListing.objects.create(
+        variant=variant_1,
         channel=channel_USD,
         price_amount=Decimal(10),
         discounted_price_amount=Decimal(10),
         cost_price_amount=Decimal(1),
         currency=channel_USD.currency_code,
     )
-    stock = Stock.objects.create(
-        warehouse=warehouse, product_variant=variant, quantity=5
-    )
-    base_price = variant.get_price(channel_listing)
-    currency = base_price.currency
-    gross = Money(amount=base_price.amount * Decimal(1.23), currency=currency)
-    quantity = 3
-    unit_price = TaxedMoney(net=base_price, gross=gross)
-    line = order.lines.create(
-        product_name=str(variant.product),
-        variant_name=str(variant),
-        product_sku=variant.sku,
-        product_variant_id=variant.get_global_id(),
-        is_shipping_required=variant.is_shipping_required(),
-        is_gift_card=variant.is_gift_card(),
-        quantity=quantity,
-        variant=variant,
-        unit_price=unit_price,
-        total_price=unit_price * quantity,
-        undiscounted_unit_price=unit_price,
-        undiscounted_total_price=unit_price * quantity,
-        base_unit_price=base_price,
-        undiscounted_base_unit_price=base_price,
-        tax_rate=Decimal("0.23"),
-        **get_tax_class_kwargs_for_order_line(product_type.tax_class),
-    )
-    Allocation.objects.create(
-        order_line=line, stock=stock, quantity_allocated=line.quantity
-    )
+    Stock.objects.create(warehouse=warehouse, product_variant=variant_1, quantity=5)
 
     product = Product.objects.create(
         name="Test product 2",
@@ -5025,45 +5128,23 @@ def order_with_lines(
         visible_in_listings=True,
         available_for_purchase_at=timezone.now(),
     )
-    variant = ProductVariant.objects.create(product=product, sku="SKU_B")
-    channel_listing = ProductVariantChannelListing.objects.create(
-        variant=variant,
+    variant_2 = ProductVariant.objects.create(product=product, sku="SKU_B")
+    variant_2_quantity = 2
+    ProductVariantChannelListing.objects.create(
+        variant=variant_2,
         channel=channel_USD,
         price_amount=Decimal(20),
         discounted_price_amount=Decimal(20),
         cost_price_amount=Decimal(2),
         currency=channel_USD.currency_code,
     )
-    stock = Stock.objects.create(
-        product_variant=variant, warehouse=warehouse, quantity=2
-    )
-    stock.refresh_from_db()
+    Stock.objects.create(warehouse=warehouse, product_variant=variant_2, quantity=2)
 
-    base_price = variant.get_price(channel_listing)
-    currency = base_price.currency
-    gross = Money(amount=base_price.amount * Decimal(1.23), currency=currency)
-    unit_price = TaxedMoney(net=base_price, gross=gross)
-    quantity = 2
-    line = order.lines.create(
-        product_name=str(variant.product),
-        variant_name=str(variant),
-        product_sku=variant.sku,
-        product_variant_id=variant.get_global_id(),
-        is_shipping_required=variant.is_shipping_required(),
-        is_gift_card=variant.is_gift_card(),
-        quantity=quantity,
-        variant=variant,
-        unit_price=unit_price,
-        total_price=unit_price * quantity,
-        undiscounted_unit_price=unit_price,
-        undiscounted_total_price=unit_price * quantity,
-        base_unit_price=base_price,
-        undiscounted_base_unit_price=base_price,
-        tax_rate=Decimal("0.23"),
-        **get_tax_class_kwargs_for_order_line(product_type.tax_class),
-    )
-    Allocation.objects.create(
-        order_line=line, stock=stock, quantity_allocated=line.quantity
+    order_lines_generator(
+        order,
+        [variant_1, variant_2],
+        [10, 20],
+        [variant_1_quantity, variant_2_quantity],
     )
 
     order.shipping_address = order.billing_address.get_copy()
@@ -5796,7 +5877,12 @@ def draft_order_with_free_shipping_voucher(
 
     order.voucher = voucher_free_shipping
     order.voucher_code = voucher_code.code
-    subtotal, shipping_price = apply_order_discounts(order, order.lines.all())
+    create_or_update_discount_object_from_order_level_voucher(
+        order, settings.DATABASE_CONNECTION_DEFAULT_NAME
+    )
+
+    subtotal = base_order_subtotal(order, order.lines.all())
+    shipping_price = order.base_shipping_price
     order.subtotal = TaxedMoney(gross=subtotal, net=subtotal)
     order.shipping_price = TaxedMoney(net=shipping_price, gross=shipping_price)
     total = subtotal + shipping_price
@@ -7685,6 +7771,51 @@ def list_stored_payment_methods_app(db, permission_manage_payments):
 
 
 @pytest.fixture
+def exclude_shipping_app_without_subscription(db, permission_manage_checkouts):
+    app = App.objects.create(name="Shipping App without subscription", is_active=True)
+    app.tokens.create(name="Default")
+    app.permissions.add(permission_manage_checkouts)
+
+    webhook = Webhook.objects.create(
+        name="shipping-webhook-1",
+        app=app,
+        target_url="https://shipping-app.com/api/",
+    )
+    WebhookEvent.objects.create(
+        event_type=WebhookEventSyncType.CHECKOUT_FILTER_SHIPPING_METHODS,
+        webhook=webhook,
+    )
+    return app
+
+
+@pytest.fixture
+def exclude_shipping_app_with_subscription(db, permission_manage_checkouts):
+    app = App.objects.create(name="Shipping App with subscription", is_active=True)
+    app.tokens.create(name="Default")
+    app.permissions.add(permission_manage_checkouts)
+
+    webhook = Webhook.objects.create(
+        name="shipping-webhook-2",
+        app=app,
+        target_url="https://shipping-app.com/api/",
+        subscription_query="""
+        subscription {
+            event {
+                ... on CheckoutFilterShippingMethods {
+                __typename
+                }
+            }
+        }
+        """,
+    )
+    WebhookEvent.objects.create(
+        event_type=WebhookEventSyncType.CHECKOUT_FILTER_SHIPPING_METHODS,
+        webhook=webhook,
+    )
+    return app
+
+
+@pytest.fixture
 def stored_payment_method_request_delete_app(db, permission_manage_payments):
     app = App.objects.create(
         name="Payment method request delete",
@@ -7701,6 +7832,27 @@ def stored_payment_method_request_delete_app(db, permission_manage_payments):
     )
     webhook.events.create(
         event_type=WebhookEventSyncType.STORED_PAYMENT_METHOD_DELETE_REQUESTED,
+    )
+    return app
+
+
+@pytest.fixture
+def payment_gateway_initialize_session_app(db, permission_manage_payments):
+    app = App.objects.create(
+        name="Payment gateway initialize session",
+        is_active=True,
+        identifier="saleor.payment.app.payment.gateway.initialize.session",
+    )
+    app.tokens.create(name="Default")
+    app.permissions.add(permission_manage_payments)
+
+    webhook = Webhook.objects.create(
+        name="payment_gateway_initialize_session",
+        app=app,
+        target_url="http://localhost:8000/endpoint/",
+    )
+    webhook.events.create(
+        event_type=WebhookEventSyncType.PAYMENT_GATEWAY_INITIALIZE_SESSION
     )
     return app
 
@@ -7769,11 +7921,137 @@ def payment_method_process_tokenization_app(db, permission_manage_payments):
 
 
 @pytest.fixture
-def tax_app(db, permission_handle_taxes):
+def transaction_process_session_app(db, permission_manage_payments):
+    app = App.objects.create(
+        name="Transaction process session",
+        is_active=True,
+        identifier="saleor.payment.app.transaction.process.session",
+    )
+    app.tokens.create(name="Default")
+    app.permissions.add(permission_manage_payments)
+
+    webhook = Webhook.objects.create(
+        name="transaction_process_session",
+        app=app,
+        target_url="http://localhost:8000/endpoint/",
+        subscription_query="""
+            subscription TransactionProcessSession {
+                event {
+                    ... on TransactionProcessSession {
+                        recipient {
+                            id
+                        }
+                        data
+                        merchantReference
+                        action {
+                            amount
+                            currency
+                            actionType
+                        }
+                        transaction {
+                            id
+                            token
+                            pspReference
+                            events {
+                                pspReference
+                            }
+                        }
+                        sourceObject {
+                            ... on Checkout {
+                                id
+                                token
+                                totalPrice {
+                                    gross {
+                                        currency
+                                        amount
+                                    }
+                                }
+                                shippingMethods {
+                                    id
+                                    name
+                                }
+                            }
+                            ... on Order {
+                                id
+                                total {
+                                    gross {
+                                        currency
+                                        amount
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        """,
+    )
+    webhook.events.create(event_type=WebhookEventSyncType.TRANSACTION_PROCESS_SESSION)
+    return app
+
+
+@pytest.fixture
+def transaction_initialize_session_app(db, permission_manage_payments):
+    app = App.objects.create(
+        name="Transaction initialize session",
+        is_active=True,
+        identifier="saleor.payment.app.transaction.initialize.session",
+    )
+    app.tokens.create(name="Default")
+    app.permissions.add(permission_manage_payments)
+
+    webhook = Webhook.objects.create(
+        name="Webhook",
+        app=app,
+        target_url="http://www.example.com",
+        subscription_query="""
+            subscription TransactionInitializeSession {
+                event {
+                    ... on TransactionInitializeSession {
+                        transaction {
+                            id
+                        }
+                        sourceObject {
+                            ... on Checkout {
+                                id
+                                shippingMethods {
+                                    id
+                                    name
+                                }
+                                totalPrice {
+                                    gross {
+                                        amount
+                                        currency
+                                    }
+                                }
+                            }
+                            ... on Order {
+                                total {
+                                    gross {
+                                        amount
+                                        currency
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        """,
+    )
+    webhook.events.create(
+        event_type=WebhookEventSyncType.TRANSACTION_INITIALIZE_SESSION
+    )
+    return app
+
+
+@pytest.fixture
+def tax_app(db, permission_handle_taxes, permission_manage_users):
     app = App.objects.create(name="Tax App", is_active=True)
     app.identifier = to_global_id_or_none(app)
     app.save()
     app.permissions.add(permission_handle_taxes)
+    app.permissions.add(permission_manage_users)
 
     webhook = Webhook.objects.create(
         name="tax-webhook-1",
@@ -7855,29 +8133,6 @@ def tax_data_response(tax_line_data_response):
         "shipping_tax_rate": 23,
         "lines": [tax_line_data_response] * 5,
     }
-
-
-@pytest.fixture
-def tax_app_with_subscription_webhooks(db, permission_handle_taxes):
-    app = App.objects.create(name="Tax App with subscription", is_active=True)
-    app.permissions.add(permission_handle_taxes)
-
-    webhook = Webhook.objects.create(
-        name="tax-subscription-webhook-1",
-        app=app,
-        target_url="https://tax-app.com/api/",
-        subscription_query=CALCULATE_TAXES_SUBSCRIPTION_QUERY,
-    )
-    webhook.events.bulk_create(
-        [
-            WebhookEvent(event_type=event_type, webhook=webhook)
-            for event_type in [
-                WebhookEventSyncType.ORDER_CALCULATE_TAXES,
-                WebhookEventSyncType.CHECKOUT_CALCULATE_TAXES,
-            ]
-        ]
-    )
-    return app
 
 
 @pytest.fixture
@@ -8184,6 +8439,23 @@ def checkout_for_cc(channel_USD, customer_user):
 
 @pytest.fixture
 def checkout_with_items_for_cc(checkout_for_cc, product_variant_list):
+    (
+        ProductVariantChannelListing.objects.create(
+            variant=product_variant_list[2],
+            channel=checkout_for_cc.channel,
+            cost_price_amount=Decimal(1),
+            price_amount=Decimal(10),
+            discounted_price_amount=Decimal(10),
+            currency=checkout_for_cc.channel.currency_code,
+        ),
+    )
+    channel_listings_map = {
+        listing.variant_id: listing
+        for listing in ProductVariantChannelListing.objects.filter(
+            channel_id=checkout_for_cc.channel_id, variant__in=product_variant_list
+        )
+    }
+
     CheckoutLine.objects.bulk_create(
         [
             CheckoutLine(
@@ -8191,18 +8463,27 @@ def checkout_with_items_for_cc(checkout_for_cc, product_variant_list):
                 variant=product_variant_list[0],
                 quantity=1,
                 currency=checkout_for_cc.currency,
+                undiscounted_unit_price_amount=channel_listings_map.get(
+                    product_variant_list[0].id
+                ).price_amount,
             ),
             CheckoutLine(
                 checkout=checkout_for_cc,
                 variant=product_variant_list[1],
                 quantity=1,
                 currency=checkout_for_cc.currency,
+                undiscounted_unit_price_amount=channel_listings_map.get(
+                    product_variant_list[1].id
+                ).price_amount,
             ),
             CheckoutLine(
                 checkout=checkout_for_cc,
                 variant=product_variant_list[2],
                 quantity=1,
                 currency=checkout_for_cc.currency,
+                undiscounted_unit_price_amount=channel_listings_map.get(
+                    product_variant_list[2].id
+                ).price_amount,
             ),
         ]
     )
@@ -8212,12 +8493,27 @@ def checkout_with_items_for_cc(checkout_for_cc, product_variant_list):
 
 
 @pytest.fixture
+def checkout_with_line_without_listing(checkout_with_items):
+    line = checkout_with_items.lines.first()
+    line.quantity = 2
+    line.save()
+    line.variant.channel_listings.filter(
+        channel_id=checkout_with_items.channel_id
+    ).delete()
+    return checkout_with_items, line
+
+
+@pytest.fixture
 def checkout_with_item_for_cc(checkout_for_cc, product_variant_list):
+    listing = product_variant_list[0].channel_listings.get(
+        channel_id=checkout_for_cc.channel_id
+    )
     CheckoutLine.objects.create(
         checkout=checkout_for_cc,
         variant=product_variant_list[0],
         quantity=1,
         currency=checkout_for_cc.currency,
+        undiscounted_unit_price_amount=listing.price_amount,
     )
     return checkout_for_cc
 
@@ -9538,7 +9834,22 @@ def setup_checkout_webhooks(
     permission_manage_checkouts,
 ):
     subscription_async_webhooks = """
+    fragment IssuingPrincipal on IssuingPrincipal {
+      ... on App {
+        id
+        name
+      }
+      ... on User {
+        id
+        email
+      }
+    }
+
     fragment CheckoutFragment on Checkout {
+      shippingMethods {
+        id
+        name
+      }
       shippingPrice {
         gross {
           amount
@@ -9554,21 +9865,33 @@ def setup_checkout_webhooks(
     subscription {
       event {
         ... on CheckoutCreated {
+          issuingPrincipal {
+            ...IssuingPrincipal
+          }
           checkout {
             ...CheckoutFragment
           }
         }
         ... on CheckoutUpdated {
+          issuingPrincipal {
+            ...IssuingPrincipal
+          }
           checkout {
             ...CheckoutFragment
           }
         }
         ... on CheckoutFullyPaid {
+          issuingPrincipal {
+            ...IssuingPrincipal
+          }
           checkout {
             ...CheckoutFragment
           }
         }
         ... on CheckoutMetadataUpdated {
+          issuingPrincipal {
+            ...IssuingPrincipal
+          }
           checkout {
             ...CheckoutFragment
           }
@@ -9849,3 +10172,51 @@ def setup_order_webhooks(
         )
 
     return _setup
+
+
+@pytest.fixture
+def tax_configuration_flat_rates(channel_USD):
+    tc = channel_USD.tax_configuration
+    tc.country_exceptions.all().delete()
+    tc.prices_entered_with_tax = False
+    tc.tax_calculation_strategy = TaxCalculationStrategy.FLAT_RATES
+    tc.tax_app_id = "avatax.app"
+    tc.save()
+    return tc
+
+
+@pytest.fixture
+def tax_configuration_tax_app(channel_USD):
+    tc = channel_USD.tax_configuration
+    tc.country_exceptions.all().delete()
+    tc.prices_entered_with_tax = False
+    tc.tax_calculation_strategy = TaxCalculationStrategy.TAX_APP
+    tc.tax_app_id = "avatax.app"
+    tc.save()
+    return tc
+
+
+@pytest.fixture
+def order_with_lines_untaxed(order_with_lines):
+    order = order_with_lines
+    lines = order.lines.all()
+    remove_tax(order, lines, False)
+    OrderLine.objects.bulk_update(
+        lines,
+        [
+            "unit_price_gross_amount",
+            "undiscounted_unit_price_gross_amount",
+            "total_price_gross_amount",
+            "undiscounted_total_price_gross_amount",
+            "tax_rate",
+        ],
+    )
+    order.save(
+        update_fields=[
+            "subtotal_gross_amount",
+            "total_gross_amount",
+            "undiscounted_total_gross_amount",
+            "shipping_price_gross_amount",
+        ]
+    )
+    return order

@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from ..core.middleware import Requestor
     from ..core.notify import NotifyEventType
     from ..core.taxes import TaxData, TaxType
+    from ..core.utils.translations import Translation
     from ..csv.models import ExportFile
     from ..discount.models import Promotion, PromotionRule, Voucher, VoucherCode
     from ..giftcard.models import GiftCard
@@ -291,7 +292,7 @@ class BasePlugin:
     #
     # Note: This method is deprecated in Saleor 3.20 and will be removed in Saleor 3.21.
     # Webhook-related functionality will be moved from the plugin to core modules.
-    attribute_created: Callable[["Attribute", None], None]
+    attribute_created: Callable[["Attribute", None, None], None]
 
     # Trigger when attribute is deleted.
     #
@@ -1136,7 +1137,7 @@ class BasePlugin:
     #
     # Note: This method is deprecated in Saleor 3.20 and will be removed in Saleor 3.21.
     # Webhook-related functionality will be moved from the plugin to core modules.
-    page_type_deleted: Callable[["PageType", Any], Any]
+    page_type_deleted: Callable[["PageType", Any, None], Any]
 
     # Trigger when page type is updated.
     #
@@ -1233,6 +1234,24 @@ class BasePlugin:
     # Note: This method is deprecated in Saleor 3.20 and will be removed in Saleor 3.21.
     # Webhook-related functionality will be moved from the plugin to core modules.
     transaction_item_metadata_updated: Callable[["TransactionItem", Any], Any]
+
+    # Trigger when transaction item metadata is updated.
+    #
+    # Overwrite this method if you need to trigger specific logic when a transaction
+    # item metadata is updated.
+    #
+    # Note: This method is deprecated in Saleor 3.20 and will be removed in Saleor 3.21.
+    # Webhook-related functionality will be moved from the plugin to core modules.
+    translations_created: Callable[[list["Translation"], None, None], Any]
+
+    # Trigger when transaction item metadata is updated.
+    #
+    # Overwrite this method if you need to trigger specific logic when a transaction
+    # item metadata is updated.
+    #
+    # Note: This method is deprecated in Saleor 3.20 and will be removed in Saleor 3.21.
+    # Webhook-related functionality will be moved from the plugin to core modules.
+    translations_updated: Callable[[list["Translation"], None, None], Any]
 
     # Trigger when product is created.
     #
@@ -1358,7 +1377,7 @@ class BasePlugin:
     #
     # Note: This method is deprecated in Saleor 3.20 and will be removed in Saleor 3.21.
     # Webhook-related functionality will be moved from the plugin to core modules.
-    product_variant_stock_updated: Callable[["Stock", None, None], Any]
+    product_variant_stocks_updated: Callable[[list["Stock"], None, None], Any]
 
     # Trigger when a product export is completed.
     #

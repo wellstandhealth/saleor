@@ -21,8 +21,14 @@ from ...core.utils import build_absolute_uri
 from ...core.utils.json_serializer import CustomJsonEncoder
 from ...csv.notifications import get_default_export_payload
 from ...graphql.core.context import SaleorContext
-from ...graphql.webhook.subscription_payload import initialize_request
-from ...graphql.webhook.utils import get_pregenerated_subscription_payload
+from ...graphql.webhook.subscription_payload import (
+    generate_payload_promise_from_subscription,
+    initialize_request,
+)
+from ...graphql.webhook.utils import (
+    get_pregenerated_subscription_payload,
+    get_subscription_query_hash,
+)
 from ...payment import PaymentError, TransactionKind
 from ...payment.interface import (
     GatewayResponse,
@@ -82,8 +88,10 @@ from ...webhook.payloads import (
     generate_translation_payload,
 )
 from ...webhook.transport.asynchronous.transport import (
+    WebhookPayloadData,
     send_webhook_request_async,
     trigger_webhooks_async,
+    trigger_webhooks_async_for_multiple_objects,
 )
 from ...webhook.transport.list_stored_payment_methods import (
     get_list_stored_payment_methods_data_dict,
@@ -439,11 +447,13 @@ class WebhookPlugin(BasePlugin):
                 self.requestor,
             )
 
-    def attribute_created(self, attribute: "Attribute", previous_value: None) -> None:
+    def attribute_created(
+        self, attribute: "Attribute", previous_value: None, webhooks=None
+    ) -> None:
         if not self.active:
             return previous_value
         self._trigger_attribute_event(
-            WebhookEventAsyncType.ATTRIBUTE_CREATED, attribute
+            WebhookEventAsyncType.ATTRIBUTE_CREATED, attribute, webhooks=webhooks
         )
 
     def attribute_updated(
@@ -1870,23 +1880,30 @@ class WebhookPlugin(BasePlugin):
                 legacy_data_generator=product_variant_data_generator,
             )
 
-    def product_variant_stock_updated(
-        self, stock: "Stock", previous_value: Any, webhooks=None
+    def product_variant_stocks_updated(
+        self, stocks: list["Stock"], previous_value: Any, webhooks=None
     ) -> Any:
         if not self.active:
             return previous_value
         event_type = WebhookEventAsyncType.PRODUCT_VARIANT_STOCK_UPDATED
         if webhooks := self._get_webhooks_for_event(event_type, webhooks):
-            product_variant_data_generator = partial(
-                generate_product_variant_with_stock_payload, [stock], self.requestor
-            )
-            self.trigger_webhooks_async(
-                None,
+            webhook_payload_details = []
+            for stock in stocks:
+                product_variant_data_generator = partial(
+                    generate_product_variant_with_stock_payload, [stock], self.requestor
+                )
+                webhook_payload_details.append(
+                    WebhookPayloadData(
+                        subscribable_object=stock,
+                        legacy_data_generator=product_variant_data_generator,
+                        data=None,
+                    )
+                )
+            trigger_webhooks_async_for_multiple_objects(
                 event_type,
                 webhooks,
-                stock,
-                self.requestor,
-                legacy_data_generator=product_variant_data_generator,
+                webhook_payloads_data=webhook_payload_details,
+                requestor=self.requestor,
             )
 
     def checkout_created(
@@ -2024,8 +2041,8 @@ class WebhookPlugin(BasePlugin):
                 legacy_data_generator=page_data_generator,
             )
 
-    def _trigger_page_type_event(self, event_type, page_type):
-        if webhooks := get_webhooks_for_event(event_type):
+    def _trigger_page_type_event(self, event_type, page_type, webhooks=None):
+        if webhooks := self._get_webhooks_for_event(event_type, webhooks):
             payload = self._serialize_payload(
                 {
                     "id": graphene.Node.to_global_id("PageType", page_type.id),
@@ -2052,11 +2069,13 @@ class WebhookPlugin(BasePlugin):
             WebhookEventAsyncType.PAGE_TYPE_UPDATED, page_type
         )
 
-    def page_type_deleted(self, page_type: "PageType", previous_value: Any) -> Any:
+    def page_type_deleted(
+        self, page_type: "PageType", previous_value: Any, webhooks=None
+    ) -> Any:
         if not self.active:
             return previous_value
         self._trigger_page_type_event(
-            WebhookEventAsyncType.PAGE_TYPE_DELETED, page_type
+            WebhookEventAsyncType.PAGE_TYPE_DELETED, page_type, webhooks=webhooks
         )
 
     def _trigger_permission_group_event(self, event_type, group):
@@ -2266,39 +2285,61 @@ class WebhookPlugin(BasePlugin):
                 legacy_data_generator=thumbnail_data_generator,
             )
 
-    def translation_created(self, translation: "Translation", previous_value: Any):
-        if not self.active:
-            return previous_value
-        event_type = WebhookEventAsyncType.TRANSLATION_CREATED
-        if webhooks := get_webhooks_for_event(event_type):
-            translation_data_generator = partial(
-                generate_translation_payload, translation, self.requestor
-            )
-            self.trigger_webhooks_async(
-                None,
-                event_type,
-                webhooks,
-                translation,
-                self.requestor,
-                legacy_data_generator=translation_data_generator,
-            )
+    def translations_created(
+        self,
+        translations: list["Translation"],
+        previous_value: None,
+        webhooks=None,
+    ) -> None:
+        return self._handle_translations(
+            translations,
+            previous_value,
+            event_type=WebhookEventAsyncType.TRANSLATION_CREATED,
+            webhooks=webhooks,
+        )
 
-    def translation_updated(self, translation: "Translation", previous_value: Any):
+    def translations_updated(
+        self,
+        translations: list["Translation"],
+        previous_value: None,
+        webhooks=None,
+    ) -> None:
+        return self._handle_translations(
+            translations,
+            previous_value,
+            event_type=WebhookEventAsyncType.TRANSLATION_UPDATED,
+            webhooks=webhooks,
+        )
+
+    def _handle_translations(
+        self,
+        translations: list["Translation"],
+        previous_value: None,
+        event_type: str,
+        webhooks=None,
+    ) -> None:
         if not self.active:
             return previous_value
-        event_type = WebhookEventAsyncType.TRANSLATION_UPDATED
-        if webhooks := get_webhooks_for_event(event_type):
-            translation_data_generator = partial(
-                generate_translation_payload, translation, self.requestor
-            )
-            self.trigger_webhooks_async(
-                None,
+        if webhooks := self._get_webhooks_for_event(event_type, webhooks):
+            webhook_payload_details = []
+            for translation in translations:
+                translation_data_generator = partial(
+                    generate_translation_payload, translation, self.requestor
+                )
+                webhook_payload_details.append(
+                    WebhookPayloadData(
+                        subscribable_object=translation,
+                        legacy_data_generator=translation_data_generator,
+                        data=None,
+                    )
+                )
+            trigger_webhooks_async_for_multiple_objects(
                 event_type,
                 webhooks,
-                translation,
-                self.requestor,
-                legacy_data_generator=translation_data_generator,
+                webhook_payloads_data=webhook_payload_details,
+                requestor=self.requestor,
             )
+        return previous_value
 
     def _trigger_warehouse_event(self, event_type, warehouse):
         if webhooks := get_webhooks_for_event(event_type):
@@ -2824,13 +2865,18 @@ class WebhookPlugin(BasePlugin):
         amount: Decimal,
         source_object: Union["Order", "Checkout"],
         request: SaleorContext,
+        pregenerated_subscription_payloads: Optional[dict] = None,
     ):
+        if pregenerated_subscription_payloads is None:
+            pregenerated_subscription_payloads = {}
+
         if not webhook.app.identifier:
             logger.debug(
                 "Skipping app with id %s as identifier is not provided.",
                 webhook.app.pk,
             )
             return
+
         if webhook.app.identifier in response_gateway:
             logger.debug(
                 "Skipping next call for %s as app has been already processed.",
@@ -2848,6 +2894,10 @@ class WebhookPlugin(BasePlugin):
         )
         payload = {"id": source_object_id, "data": gateway_data, "amount": amount}
         subscribable_object = (source_object, gateway_data, amount)
+
+        pregenerated_subscription_payload = get_pregenerated_subscription_payload(
+            webhook, pregenerated_subscription_payloads
+        )
         response_data = trigger_webhook_sync(
             event_type=WebhookEventSyncType.PAYMENT_GATEWAY_INITIALIZE_SESSION,
             payload=json.dumps(payload, cls=CustomJsonEncoder),
@@ -2856,6 +2906,7 @@ class WebhookPlugin(BasePlugin):
             subscribable_object=subscribable_object,
             request=request,
             requestor=self.requestor,
+            pregenerated_subscription_payload=pregenerated_subscription_payload,
         )
         error_msg = None
         if response_data is None:
@@ -2875,6 +2926,8 @@ class WebhookPlugin(BasePlugin):
     ) -> list[PaymentGatewayData]:
         if not self.active:
             return previous_value
+
+        event_type = WebhookEventSyncType.PAYMENT_GATEWAY_INITIALIZE_SESSION
         response_gateway: dict[str, PaymentGatewayData] = {}
         apps_identifiers = None
 
@@ -2883,16 +2936,48 @@ class WebhookPlugin(BasePlugin):
             gateways = {gateway.app_identifier: gateway for gateway in payment_gateways}
             apps_identifiers = list(gateways.keys())
 
-        webhooks = get_webhooks_for_event(
-            WebhookEventSyncType.PAYMENT_GATEWAY_INITIALIZE_SESSION,
-            apps_identifier=apps_identifiers,
+        webhooks = get_webhooks_for_event(event_type, apps_identifier=apps_identifiers)
+        request = initialize_request(
+            self.requestor, sync_event=True, event_type=event_type
         )
 
-        request = initialize_request(
-            self.requestor,
-            sync_event=True,
-            event_type=WebhookEventSyncType.PAYMENT_GATEWAY_INITIALIZE_SESSION,
+        pregenerated_subscription_payloads: dict[int, dict[str, dict[str, Any]]] = (
+            defaultdict(lambda: defaultdict(dict))
         )
+
+        promises = []
+        for webhook in webhooks:
+            if not webhook.subscription_query:
+                continue
+
+            query_hash = get_subscription_query_hash(webhook.subscription_query)
+            app = webhook.app
+
+            gateway = gateways.get(app.identifier)
+            gateway_data = None
+            if gateway:
+                gateway_data = gateway.data
+
+            subscribable_object = (source_object, gateway_data, amount)
+
+            promise_payload = generate_payload_promise_from_subscription(
+                event_type=event_type,
+                subscribable_object=subscribable_object,
+                subscription_query=webhook.subscription_query,
+                request=request,
+                app=app,
+            )
+            promises.append(promise_payload)
+
+            def store_payload(
+                payload,
+                app_id=app.pk,
+                query_hash=query_hash,
+            ):
+                if payload:
+                    pregenerated_subscription_payloads[app_id][query_hash] = payload
+
+            promise_payload.then(store_payload)
 
         for webhook in webhooks:
             self._payment_gateway_initialize_session_for_single_webhook(
@@ -2902,6 +2987,7 @@ class WebhookPlugin(BasePlugin):
                 amount=amount,
                 source_object=source_object,
                 request=request,
+                pregenerated_subscription_payloads=pregenerated_subscription_payloads,
             )
         return list(response_gateway.values())
 
@@ -2937,6 +3023,22 @@ class WebhookPlugin(BasePlugin):
             transaction_session_data.payment_gateway_data,
         )
 
+        pregenerated_subscription_payload: dict[str, Any] = {}
+        if webhook.subscription_query:
+            app = webhook.app
+            request = initialize_request(
+                self.requestor, sync_event=True, event_type=webhook_event
+            )
+            promise_payload = generate_payload_promise_from_subscription(
+                event_type=webhook_event,
+                subscribable_object=transaction_session_data,
+                subscription_query=webhook.subscription_query,
+                request=request,
+                app=app,
+            )
+            if promise_payload:
+                pregenerated_subscription_payload = promise_payload.get() or {}
+
         response_data = trigger_webhook_sync(
             event_type=webhook_event,
             payload=payload,
@@ -2944,6 +3046,7 @@ class WebhookPlugin(BasePlugin):
             allow_replica=False,
             subscribable_object=transaction_session_data,
             requestor=self.requestor,
+            pregenerated_subscription_payload=pregenerated_subscription_payload,
         )
         error_msg = None
         if response_data is None:
@@ -3297,7 +3400,10 @@ class WebhookPlugin(BasePlugin):
         checkout: "Checkout",
         available_shipping_methods: list["ShippingMethodData"],
         previous_value: list[ExcludedShippingMethod],
+        pregenerated_subscription_payloads: Optional[dict] = None,
     ) -> list[ExcludedShippingMethod]:
+        if pregenerated_subscription_payloads is None:
+            pregenerated_subscription_payloads = {}
         generate_function = generate_excluded_shipping_methods_for_checkout_payload
         payload_function = lambda: generate_function(  # noqa: E731
             checkout,
@@ -3309,6 +3415,7 @@ class WebhookPlugin(BasePlugin):
             payload_fun=payload_function,
             subscribable_object=checkout,
             allow_replica=self.allow_replica,
+            pregenerated_subscription_payloads=pregenerated_subscription_payloads,
         )
 
     def is_event_active(self, event: str, channel=Optional[str]):
