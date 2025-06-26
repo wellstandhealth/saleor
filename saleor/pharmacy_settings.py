@@ -63,7 +63,7 @@ def get_url_from_env(name, *, schemes=None) -> Optional[str]:
 
 DEBUG = get_bool_from_env("DEBUG", True)
 
-SITE_ID = os.environ.get("SITE_ID", 1)
+SITE_ID = 1
 
 PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 
