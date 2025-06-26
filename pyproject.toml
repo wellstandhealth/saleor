@@ -86,6 +86,7 @@ documentation = "https://docs.saleor.io/"
 
   django-allow-cidr = "^0.6.0"
   google-cloud-secret-manager = ">=2.13.0,<3.0.0"
+  algoliasearch = ">=4,<5"
 
     [tool.poetry.dependencies.psycopg2-binary]
     version = "^2.9.10"
@@ -225,8 +226,3 @@ target-version = "py39"
 
     [tool.ruff.lint.isort]
     known-first-party = [ "saleor" ]
-
-
-[[tool.poetry.source]]
-name = "wellstand-pypi"
-url = "https://us-python.pkg.dev/non-production-381217/wellstand-pypi/simple/"
