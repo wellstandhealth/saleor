@@ -605,15 +605,15 @@ files = [
 
 [[package]]
 name = "braintree"
-version = "4.26.0"
+version = "4.37.0"
 description = "Braintree Python Library"
 optional = false
 python-versions = "*"
 groups = ["main"]
 markers = "platform_python_implementation == \"PyPy\""
 files = [
-    {file = "braintree-4.26.0-py2.py3-none-any.whl", hash = "sha256:462ac708459ef337148005e476d5aa1074b12948cf516650ce900a435addb9f5"},
-    {file = "braintree-4.26.0.tar.gz", hash = "sha256:709bd11a90979bfd856164d5a8855a31d5ffa0e832161ffe48d94c9f7ae2b62b"},
+    {file = "braintree-4.37.0-py2.py3-none-any.whl", hash = "sha256:36d9f04ab55f16433aaf5a22bd8ac603e29e961338ffa0e603e9129e611db533"},
+    {file = "braintree-4.37.0.tar.gz", hash = "sha256:a5f5d833ed9879ba4d6af9c1f934f1382bbc4c9ff785bd26cbe825f4506adc29"},
 ]
 
 [package.dependencies]
@@ -6784,4 +6784,4 @@ test = ["pytest"]
 [metadata]
 lock-version = "2.1"
 python-versions = "~3.12"
-content-hash = "9ad8fbf49b5303569035a4a5b74f560cdac6489c5f6cf785674e90d4f802a5fd"
+content-hash = "3e41c09521a3678213faecfcac84659e2a5177258f3770cb5001bde0be6ec583"
